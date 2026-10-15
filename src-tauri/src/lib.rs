@@ -5,3 +5,4 @@ pub mod covers;
 pub mod download;
 pub mod instance;
 pub mod library;
+pub mod reader;

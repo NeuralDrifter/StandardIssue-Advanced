@@ -8,9 +8,17 @@ use ebook_manager::catalog;
 use ebook_manager::covers;
 use ebook_manager::download;
 use ebook_manager::enrich;
+use ebook_manager::instance::{self, Acquire, HolderInfo, InstanceLock};
+use ebook_manager::library::{self, MigrationReport};
+use ebook_manager::reader::{BookProgress, ReaderSettings, ReadingStore};
 use serde::Serialize;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// Which edition this build is. Shown to the other edition while this one holds the lock.
+const EDITION: &str = "Advanced";
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -19,10 +27,36 @@ pub struct AppState {
     pub operation: Mutex<Option<String>>,
     pub cancel: Arc<AtomicBool>,
     pub client: reqwest::Client,
+    /// True once this process holds the instance lock and has loaded its data.
+    ready: AtomicBool,
+    lock: Mutex<Option<InstanceLock>>,
+    data_dir: PathBuf,
+    project_dir: PathBuf,
+    reading: OnceLock<ReadingStore>,
 }
 
 impl AppState {
+    fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::SeqCst)
+    }
+
+    fn ensure_ready(&self) -> Result<(), String> {
+        if self.is_ready() {
+            Ok(())
+        } else {
+            Err("not ready: another copy of StandardIssue is running".to_string())
+        }
+    }
+
+    fn reading(&self) -> Result<&ReadingStore, String> {
+        self.ensure_ready()?;
+        self.reading.get().ok_or_else(|| "reading state not loaded".to_string())
+    }
+
     fn start_op(&self, name: &str) -> bool {
+        if !self.is_ready() {
+            return false;
+        }
         let mut op = self.operation.lock().unwrap();
         if op.is_some() {
             return false;
@@ -322,6 +356,7 @@ async fn download_all(handle: tauri::AppHandle, state: tauri::State<'_, Arc<AppS
 
 #[tauri::command]
 async fn download_single(state: tauri::State<'_, Arc<AppState>>, repo: String) -> Result<serde_json::Value, String> {
+    state.ensure_ready()?;
     let epubs_dir = state.store.epubs_dir.clone();
 
     let path = download::download_single_book(&state.store, &state.client, &repo, &epubs_dir).await?;
@@ -336,31 +371,30 @@ fn get_cover_path(state: tauri::State<'_, Arc<AppState>>, repo_name: String) -> 
     cover_path.to_string_lossy().to_string()
 }
 
+/// Locate a book's epub: organized path first, then the flat `{repo}.epub` fallback.
+fn find_epub(state: &AppState, repo: &str) -> (Option<Book>, Option<PathBuf>) {
+    let epubs_dir = &state.store.epubs_dir;
+    let book = state
+        .store
+        .all()
+        .into_iter()
+        .find(|b| ebook_manager::books::repo_name(b) == repo);
+
+    if let Some(b) = &book {
+        let p = ebook_manager::books::epub_path(epubs_dir, b);
+        if !p.as_os_str().is_empty() && p.exists() {
+            return (book, Some(p));
+        }
+    }
+    let flat = epubs_dir.join(format!("{repo}.epub"));
+    let path = flat.exists().then_some(flat);
+    (book, path)
+}
+
 #[tauri::command]
 async fn open_epub(handle: tauri::AppHandle, state: tauri::State<'_, Arc<AppState>>, repo: String) -> Result<(), String> {
-    let books = state.store.all();
-    let epubs_dir = &state.store.epubs_dir;
-
-    // Find the book's epub path
-    let mut found = None;
-    for b in &books {
-        if ebook_manager::books::repo_name(b) == repo {
-            let p = ebook_manager::books::epub_path(epubs_dir, b);
-            if !p.as_os_str().is_empty() && p.exists() {
-                found = Some(p);
-                break;
-            }
-        }
-    }
-    // Fallback: flat path
-    if found.is_none() {
-        let flat = epubs_dir.join(format!("{repo}.epub"));
-        if flat.exists() {
-            found = Some(flat);
-        }
-    }
-
-    match found {
+    state.ensure_ready()?;
+    match find_epub(&state, &repo).1 {
         Some(path) => {
             let path_str = path.to_string_lossy().to_string();
             handle
@@ -371,6 +405,143 @@ async fn open_epub(handle: tauri::AppHandle, state: tauri::State<'_, Arc<AppStat
         }
         None => Err("epub not found".to_string()),
     }
+}
+
+// --- Instance lock / startup ---
+
+#[derive(Serialize)]
+struct StatusResponse {
+    ready: bool,
+    edition: &'static str,
+    held_by: Option<HolderInfo>,
+    migration: Option<MigrationReport>,
+    warnings: Vec<String>,
+}
+
+/// Called by the frontend at boot and every 2 s while blocked. Tries to take the
+/// instance lock; on success migrates the old library, loads data and marks ready.
+#[tauri::command]
+async fn instance_status(state: tauri::State<'_, Arc<AppState>>) -> Result<StatusResponse, String> {
+    let mut status = StatusResponse {
+        ready: true,
+        edition: EDITION,
+        held_by: None,
+        migration: None,
+        warnings: vec![],
+    };
+    let mut guard = state.lock.lock().unwrap();
+    if state.is_ready() {
+        return Ok(status);
+    }
+
+    let lock = match instance::try_acquire(&state.data_dir, EDITION) {
+        Err(e) => {
+            return Err(format!(
+                "cannot create the instance lock in {}: {e}",
+                state.data_dir.display()
+            ))
+        }
+        Ok(Acquire::HeldBy(info)) => {
+            status.ready = false;
+            status.held_by = info;
+            return Ok(status);
+        }
+        Ok(Acquire::Acquired(lock)) => lock,
+    };
+    *guard = Some(lock);
+
+    let mut report = MigrationReport::default();
+    for sub in ["epubs", "covers"] {
+        library::migrate_dir(
+            &state.project_dir.join(sub),
+            &state.store.epubs_dir.parent().unwrap_or(&state.project_dir).join(sub),
+            &mut report,
+        );
+    }
+    if !report.is_empty() {
+        log::info!("library migration: {report:?}");
+    }
+    status.migration = Some(report);
+
+    if let Err(e) = state.store.load() {
+        log::warn!("could not load books.json: {e}");
+        status.warnings.push(e);
+    }
+
+    let (reading, warning) = ReadingStore::open(state.data_dir.join("reading.json"));
+    if let Some(w) = warning {
+        log::warn!("{w}");
+        status.warnings.push(w);
+    }
+    let _ = state.reading.set(reading);
+
+    state.ready.store(true, Ordering::SeqCst);
+    Ok(status)
+}
+
+// --- Reader ---
+
+#[derive(Serialize)]
+struct ReaderOpenResponse {
+    path: String,
+    title: String,
+    author: String,
+    word_count: i64,
+    progress: Option<BookProgress>,
+}
+
+#[tauri::command]
+fn reader_open(state: tauri::State<'_, Arc<AppState>>, repo: String) -> Result<ReaderOpenResponse, String> {
+    let reading = state.reading()?;
+    let (book, path) = find_epub(&state, &repo);
+    let path = path.ok_or_else(|| "not-found".to_string())?;
+    let book = book.unwrap_or_default();
+    Ok(ReaderOpenResponse {
+        path: path.to_string_lossy().to_string(),
+        title: book.title,
+        author: book.author,
+        word_count: book.word_count,
+        progress: reading.progress(&repo),
+    })
+}
+
+#[tauri::command]
+fn reader_save_progress(state: tauri::State<'_, Arc<AppState>>, repo: String, cfi: String, fraction: f64) -> Result<(), String> {
+    state.reading()?.save_progress(&repo, &cfi, fraction)
+}
+
+#[tauri::command]
+fn reader_get_settings(state: tauri::State<'_, Arc<AppState>>) -> Result<ReaderSettings, String> {
+    Ok(state.reading()?.get_settings())
+}
+
+#[tauri::command]
+fn reader_save_settings(state: tauri::State<'_, Arc<AppState>>, settings: ReaderSettings) -> Result<ReaderSettings, String> {
+    state.reading()?.save_settings(settings)
+}
+
+#[derive(Serialize)]
+struct ProgressWithTitle {
+    #[serde(flatten)]
+    progress: BookProgress,
+    title: String,
+}
+
+#[tauri::command]
+fn reading_progress_all(state: tauri::State<'_, Arc<AppState>>) -> Result<BTreeMap<String, ProgressWithTitle>, String> {
+    let all = state.reading()?.all_progress();
+    let books = state.store.all();
+    Ok(all
+        .into_iter()
+        .map(|(repo, progress)| {
+            let title = books
+                .iter()
+                .find(|b| ebook_manager::books::repo_name(b) == repo)
+                .map(|b| b.title.clone())
+                .unwrap_or_default();
+            (repo, ProgressWithTitle { progress, title })
+        })
+        .collect())
 }
 
 fn main() {
@@ -400,23 +571,26 @@ fn main() {
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
             std::fs::create_dir_all(&data_dir).ok();
 
+            // Shared by both editions: Documents\StandardIssue Library\{epubs,covers}
+            let library_dir = app
+                .path()
+                .document_dir()
+                .unwrap_or_else(|_| project_dir.clone())
+                .join(library::LIBRARY_DIR_NAME);
             let books_json = data_dir.join("books.json");
-            let epubs_dir = project_dir.join("epubs");
-            let covers_dir = project_dir.join("covers");
+            let epubs_dir = library_dir.join("epubs");
+            let covers_dir = library_dir.join("covers");
 
             std::fs::create_dir_all(&epubs_dir).ok();
             std::fs::create_dir_all(&covers_dir).ok();
 
+            // The webview may read only the library folders through the asset protocol
+            let scope = app.asset_protocol_scope();
+            scope.allow_directory(&epubs_dir, true)?;
+            scope.allow_directory(&covers_dir, true)?;
+
+            // Data is loaded by instance_status once the instance lock is held
             let store = BookStore::new(books_json, epubs_dir, covers_dir);
-            if let Err(e) = store.load() {
-                log::warn!("could not load books.json: {e}");
-            } else {
-                log::info!(
-                    "Loaded {} books, {} downloaded",
-                    store.count(),
-                    store.count_downloaded()
-                );
-            }
 
             let state = Arc::new(AppState {
                 store,
@@ -426,6 +600,11 @@ fn main() {
                     .timeout(std::time::Duration::from_secs(30))
                     .build()
                     .unwrap(),
+                ready: AtomicBool::new(false),
+                lock: Mutex::new(None),
+                data_dir,
+                project_dir,
+                reading: OnceLock::new(),
             });
 
             app.manage(state);
@@ -443,6 +622,12 @@ fn main() {
             download_single,
             get_cover_path,
             open_epub,
+            instance_status,
+            reader_open,
+            reader_save_progress,
+            reader_get_settings,
+            reader_save_settings,
+            reading_progress_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

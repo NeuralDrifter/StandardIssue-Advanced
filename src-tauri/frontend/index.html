@@ -263,18 +263,70 @@ header h1 {
   font-size: 1.1rem;
 }
 
+
+/* Lock screen: shown while another copy of the app holds the instance lock */
+#lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+#lock-screen[hidden] { display: none; }
+#lock-screen h2 { font-size: 1.2rem; }
+#lock-screen p { color: var(--text-dim); font-size: .9rem; }
+
+/* Reading progress on covers */
+.card .read-progress {
+  position: absolute;
+  left: 0; right: 0;
+  top: 0;
+  height: 4px;
+  background: rgba(0,0,0,.5);
+}
+.card .read-progress div { height: 100%; background: var(--accent); }
+
+#continue-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: .82rem;
+  cursor: pointer;
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#continue-btn:hover { background: var(--accent); }
+#continue-btn[hidden] { display: none; }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #666; }
 </style>
+<link rel="stylesheet" href="reader.css">
 </head>
 <body>
+
+<div id="lock-screen" hidden>
+  <h2 id="lock-title">Waiting…</h2>
+  <p id="lock-detail"></p>
+</div>
 
 <header>
   <h1>Standard Ebooks</h1>
   <input type="text" id="search" placeholder="Search by title or author...">
+  <button id="continue-btn" hidden></button>
   <span class="stats" id="stats"></span>
 </header>
 
@@ -322,8 +374,44 @@ let operationRunning = false;
 let cacheBust = '';
 
 // --- Init ---
-fetchStats();
-loadBooks(1);
+// Nothing loads until this copy holds the instance lock (only one edition may run at a time).
+const lockScreen = document.getElementById('lock-screen');
+
+function boot() {
+  invoke('instance_status').then(status => {
+    if (!status.ready) {
+      const other = status.held_by ? `StandardIssue ${status.held_by.edition}` : 'Another copy of StandardIssue';
+      document.getElementById('lock-title').textContent = `${other} is already running`;
+      document.getElementById('lock-detail').textContent = 'Close it to continue. This window will carry on automatically.';
+      lockScreen.hidden = false;
+      setTimeout(boot, 2000);
+      return;
+    }
+    lockScreen.hidden = true;
+    showStartupReport(status);
+    fetchStats();
+    loadBooks(1);
+  }).catch(err => {
+    document.getElementById('lock-title').textContent = 'StandardIssue cannot start';
+    document.getElementById('lock-detail').textContent = String(err);
+    lockScreen.hidden = false;
+  });
+}
+
+function showStartupReport(status) {
+  const m = status.migration;
+  const notes = [];
+  if (m && (m.moved || m.duplicates || m.conflicts.length || m.failures.length)) {
+    notes.push(`Library moved to Documents\\StandardIssue Library: ${m.moved} moved, ${m.duplicates} duplicates removed` +
+      (m.conflicts.length ? `, ${m.conflicts.length} conflicts left in place` : '') +
+      (m.failures.length ? `, ${m.failures.length} failed` : ''));
+    if (m.conflicts.length || m.failures.length) console.warn('library migration', m);
+  }
+  notes.push(...status.warnings);
+  if (notes.length) progressMsg.textContent = notes.join(' — ');
+}
+
+boot();
 
 searchInput.addEventListener('input', () => {
   clearTimeout(searchTimer);
@@ -363,6 +451,7 @@ function loadBooks(page) {
       currentPage = data.page;
       renderBooks(data.books, page > 1);
       updateLoadMore(data.total);
+      if (page === 1) refreshReadingProgress();
     });
 }
 
@@ -411,6 +500,8 @@ function renderBooks(books, append) {
     const card = document.createElement('div');
     card.className = 'card';
     card.onclick = () => showDetail(book);
+    if (book.downloaded) card.ondblclick = (e) => { e.stopPropagation(); closeDetail(); openReader(rn); };
+    card.dataset.repo = rn;
 
     const rn = book.repo_name || '';
 
@@ -421,6 +512,7 @@ function renderBooks(books, append) {
       <img src="" alt="" loading="lazy"
            onerror="this.onerror=null;this.style.background='#2a2a3e';this.removeAttribute('src');">
       <span class="badge ${badgeClass}">${badgeText}</span>
+      ${progressBar(rn)}
       <div class="info">
         <div class="title">${esc(book.title)}</div>
         <div class="author">${esc(book.author)}</div>
@@ -487,7 +579,8 @@ function showDetail(book) {
     ${book.wikipedia ? `<div style="margin-bottom:12px"><a href="${esc(book.wikipedia)}" target="_blank" style="color:var(--accent);font-size:0.85rem">Wikipedia article</a></div>` : ''}
     <div class="actions">
       ${book.downloaded
-        ? `<button class="btn-primary" onclick="openEpub('${esc(rn)}')">Open Epub</button>`
+        ? `<button class="btn-primary" onclick="openReader('${esc(rn)}')">Read</button>
+           <button class="btn-secondary" onclick="openEpub('${esc(rn)}')">Open in System Reader</button>`
         : `<button class="btn-primary" onclick="downloadSingle('${esc(rn)}')">Build &amp; Download</button>`
       }
       ${book.url ? `<button class="btn-secondary" onclick="window.open('${esc(book.url)}','_blank')">Standard Ebooks Page</button>` : ''}
@@ -501,6 +594,61 @@ function showDetail(book) {
 function closeDetail() {
   overlay.classList.remove('active');
 }
+
+// --- In-app reader ---
+
+let readingProgress = {};
+const continueBtn = document.getElementById('continue-btn');
+
+function openReader(repo) {
+  if (!repo || !window.Reader) return;
+  closeDetail();
+  window.Reader.open(repo);
+}
+
+function progressBar(repo) {
+  const p = readingProgress[repo];
+  if (!p || p.fraction <= 0) return '';
+  return `<div class="read-progress" title="${Math.round(p.fraction * 100)}% read"><div style="width:${(p.fraction * 100).toFixed(1)}%"></div></div>`;
+}
+
+function refreshReadingProgress() {
+  invoke('reading_progress_all').then(map => {
+    readingProgress = map || {};
+    // Update bars on cards already rendered
+    grid.querySelectorAll('.card[data-repo]').forEach(card => {
+      card.querySelector('.read-progress')?.remove();
+      const html = progressBar(card.dataset.repo);
+      if (html) card.querySelector('.badge').insertAdjacentHTML('afterend', html);
+    });
+    // "Continue reading" = most recently read book that isn't finished
+    const recent = Object.entries(readingProgress)
+      .filter(([, p]) => p.fraction < 0.995)
+      .sort((a, b) => b[1].updated_at - a[1].updated_at)[0];
+    if (recent) {
+      const [repo] = recent;
+      continueBtn.textContent = `Continue: ${recent[1].title || repo}`;
+      continueBtn.onclick = () => openReader(repo);
+      continueBtn.hidden = false;
+    } else {
+      continueBtn.hidden = true;
+    }
+  }).catch(err => console.error('reading progress', err));
+}
+
+function reloadLibrary() {
+  fetchStats();
+  grid.innerHTML = '';
+  currentPage = 1;
+  allBooks = [];
+  loadBooks(1);
+}
+
+window.addEventListener('load', () => {
+  if (!window.Reader) return;
+  window.Reader.onClose = refreshReadingProgress;
+  window.Reader.onLibraryChanged = reloadLibrary;
+});
 
 function openEpub(repo) {
   if (!repo) return;
@@ -607,5 +755,6 @@ function esc(s) {
   return d.innerHTML;
 }
 </script>
+<script type="module" src="reader.js"></script>
 </body>
 </html>
