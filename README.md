@@ -2,7 +2,7 @@
 
 > The Advanced edition of [StandardIssue](https://github.com/NeuralDrifter/StandardIssue): everything in the simple edition plus a built-in EPUB reader.
 
-A fast, native desktop app for managing the entire [Standard Ebooks](https://standardebooks.org) catalog. Built with **Tauri v2** and **Rust** — no JavaScript frameworks, no bundlers, just a single HTML frontend backed by a pure Rust backend.
+A fast, native desktop app for managing the entire [Standard Ebooks](https://standardebooks.org) catalog. Built with **Tauri v2** and **Rust**: a plain HTML, CSS and JavaScript frontend (no frameworks, no bundlers) on top of a pure Rust backend.
 
 ## What It Does
 
