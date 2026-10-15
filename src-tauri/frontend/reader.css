@@ -6,6 +6,7 @@
   --r-fg: #1b1b1b;
   --r-dim: #6b6b6b;
   --r-chrome: rgba(250, 250, 250, .96);
+  --r-pop: #f7f7f7;
   --r-line: rgba(0, 0, 0, .1);
   --r-accent: #e94560;
   --r-bar: 44px;
@@ -24,10 +25,12 @@
 .reader[data-theme="sepia"] {
   --r-bg: #f4ecd8; --r-fg: #3b2f22; --r-dim: #7d6b55;
   --r-chrome: rgba(238, 228, 204, .96); --r-line: rgba(59, 47, 34, .15);
+  --r-pop: #ece2c9;
 }
 .reader[data-theme="dark"] {
   --r-bg: #1c1c1e; --r-fg: #dcdcdc; --r-dim: #8e8e93;
   --r-chrome: rgba(36, 36, 38, .96); --r-line: rgba(255, 255, 255, .1);
+  --r-pop: #2a2a2d;
 }
 
 /* Toolbar floats over a reserved strip so hiding it never reflows the book */
@@ -170,7 +173,7 @@
   right: 52px;
   width: 280px;
   padding: 14px;
-  background: var(--r-chrome);
+  background: var(--r-pop);
   border: 1px solid var(--r-line);
   border-radius: 10px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, .25);
@@ -195,3 +198,6 @@
 .r-seg button.active { border-color: var(--r-accent); background: var(--r-line); }
 .r-size { display: flex; align-items: center; gap: 8px; }
 .r-size span { flex: 1; text-align: center; }
+
+/* Library page must not scroll behind the reader */
+body.reader-open { overflow: hidden; }

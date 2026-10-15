@@ -128,6 +128,7 @@ async function open(repo) {
   if (current) await close()
 
   root.hidden = false
+  document.body.classList.add('reader-open')
   showMessage('Opening…')
   settings ??= await invoke('reader_get_settings')
   applyChromeSettings()
@@ -207,6 +208,7 @@ async function close() {
   $('.r-popover').hidden = true
   $('.r-toc').innerHTML = ''
   root.hidden = true
+  document.body.classList.remove('reader-open')
   Reader.onClose?.()
 }
 

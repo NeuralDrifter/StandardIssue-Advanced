@@ -500,10 +500,11 @@ function renderBooks(books, append) {
     const card = document.createElement('div');
     card.className = 'card';
     card.onclick = () => showDetail(book);
-    if (book.downloaded) card.ondblclick = (e) => { e.stopPropagation(); closeDetail(); openReader(rn); };
-    card.dataset.repo = rn;
 
     const rn = book.repo_name || '';
+
+    if (book.downloaded) card.ondblclick = (e) => { e.stopPropagation(); closeDetail(); openReader(rn); };
+    card.dataset.repo = rn;
 
     const badgeClass = book.downloaded ? 'downloaded' : 'not-downloaded';
     const badgeText = book.downloaded ? 'Downloaded' : 'Not Downloaded';
