@@ -1,4 +1,6 @@
-# StandardIssue
+# StandardIssue (Advanced)
+
+> The Advanced edition of [StandardIssue](https://github.com/NeuralDrifter/StandardIssue): everything in the simple edition plus a built-in EPUB reader.
 
 A fast, native desktop app for managing the entire [Standard Ebooks](https://standardebooks.org) catalog. Built with **Tauri v2** and **Rust** — no JavaScript frameworks, no bundlers, just a single HTML frontend backed by a pure Rust backend.
 
@@ -31,7 +33,9 @@ epubs/
 - **Epub Building** — Shallow-clones each repo, zips `src/` into a valid EPUB (mimetype first, uncompressed, per spec), and organizes by category/author/series
 - **Search** — Filter by title or author instantly
 - **Single Book Download** — Click any book to build just that one
-- **Open in Reader** — Opens downloaded epubs in your system's default reader
+- **Built-in Reader** — Read any downloaded book inside the app: paginated, two-page or scroll layout; light, sepia and dark themes; publisher, serif or sans fonts; adjustable size and line spacing; table of contents; endnote jumps with a back button; resumes exactly where you left off
+- **Continue Reading** — Header shortcut to your most recent book, plus progress bars on started covers
+- **Open in System Reader** — Still available for any downloaded epub
 - **Cancel Operations** — All long-running operations support cancellation
 - **Concurrent Downloads** — Parallel fetching with configurable semaphore limits
 
@@ -69,7 +73,11 @@ src-tauri/
 │   ├── covers.rs      # SVG cover extraction, JPEG resize, caching
 │   └── download.rs    # Repo cloning, EPUB zip building, batch downloads
 ├── frontend/
-│   └── index.html     # Complete UI — grid layout, detail panels, progress
+│   ├── index.html     # Library UI — grid layout, detail panels, progress
+│   ├── reader.js      # In-app reader overlay (foliate-js)
+│   ├── reader.css     # Reader styles and themes
+│   ├── sanitize.js    # Strips scripts from book content before display
+│   └── vendor/foliate-js/  # Pinned EPUB renderer (see VERSION)
 ├── capabilities/
 │   └── default.json   # Tauri permission scopes
 ├── Cargo.toml
@@ -88,8 +96,15 @@ All operations run concurrently with semaphore-bounded parallelism, emit progres
 ## Data Storage
 
 - **Books metadata** is stored as JSON in the Tauri app data directory (`~/.local/share/com.neuraldrifter.ebook-manager/books.json` on Linux)
-- **Epubs** are saved relative to the project directory in `epubs/`
-- **Covers** are cached in `covers/`
+- **Epubs** are saved in `Documents\StandardIssue Library\epubs`
+- **Covers** are cached in `Documents\StandardIssue Library\covers`
+- **Reading positions and reader settings** are stored in `reading.json` next to `books.json`
+
+Older versions kept `epubs/` and `covers/` inside the project folder; they are moved to the shared library automatically on first launch.
+
+### Simple and Advanced editions
+
+StandardIssue comes in two editions — [Simple](https://github.com/NeuralDrifter/StandardIssue) and [Advanced](https://github.com/NeuralDrifter/StandardIssue-Advanced) — that share the same library and data. Only one can run at a time: if you open one while the other is running, it shows a waiting screen and carries on automatically once the other is closed.
 
 ## Tech Stack
 
@@ -99,7 +114,7 @@ All operations run concurrently with semaphore-bounded parallelism, emit progres
 | Frontend | Vanilla HTML/CSS/JS, Tauri IPC |
 | Desktop  | Tauri v2 |
 
-No Electron. No React. No webpack. The entire frontend is a single 600-line HTML file.
+No Electron. No React. No webpack. Plain HTML and ES modules; the EPUB renderer is a vendored copy of [foliate-js](https://github.com/johnfactotum/foliate-js) (MIT), pinned to the commit in `frontend/vendor/foliate-js/VERSION`.
 
 ## License
 

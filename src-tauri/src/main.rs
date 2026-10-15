@@ -189,6 +189,7 @@ fn cancel_operation(state: tauri::State<'_, Arc<AppState>>) -> serde_json::Value
 
 #[tauri::command]
 async fn sync_catalog(handle: tauri::AppHandle, state: tauri::State<'_, Arc<AppState>>) -> Result<serde_json::Value, String> {
+    state.ensure_ready()?;
     if !state.start_op("sync") {
         return Err(format!("operation {:?} already running", state.current_op()));
     }
@@ -222,6 +223,7 @@ async fn sync_catalog(handle: tauri::AppHandle, state: tauri::State<'_, Arc<AppS
 
 #[tauri::command]
 async fn enrich_all(handle: tauri::AppHandle, state: tauri::State<'_, Arc<AppState>>) -> Result<serde_json::Value, String> {
+    state.ensure_ready()?;
     if !state.start_op("enrich") {
         return Err(format!("operation {:?} already running", state.current_op()));
     }
@@ -264,6 +266,7 @@ async fn enrich_all(handle: tauri::AppHandle, state: tauri::State<'_, Arc<AppSta
 
 #[tauri::command]
 async fn fetch_covers(handle: tauri::AppHandle, state: tauri::State<'_, Arc<AppState>>) -> Result<serde_json::Value, String> {
+    state.ensure_ready()?;
     if !state.start_op("covers") {
         return Err(format!("operation {:?} already running", state.current_op()));
     }
@@ -312,6 +315,7 @@ async fn fetch_covers(handle: tauri::AppHandle, state: tauri::State<'_, Arc<AppS
 
 #[tauri::command]
 async fn download_all(handle: tauri::AppHandle, state: tauri::State<'_, Arc<AppState>>) -> Result<serde_json::Value, String> {
+    state.ensure_ready()?;
     if !state.start_op("download") {
         return Err(format!("operation {:?} already running", state.current_op()));
     }
