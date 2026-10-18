@@ -193,7 +193,7 @@ function settingsPage() {
   return `<div class="flex flex-col gap-gutter max-w-4xl">
     ${card(`<div class="eyebrow mb-space-sm">Library</div>
       ${row('Library folder', esc(state.disk?.library_dir ?? ''), `<button data-open-library class="btn-glass">${icon('folder_open', 'text-[16px]')}Open folder</button>`)}
-      ${row('Organize library by genre', 'Files epubs as Genre / Author / Title. Leave off while you still use the simple edition of StandardIssue, which looks for books under Uncategorized.', sw('organize_by_genre'))}`)}
+      ${row('Organize library by genre', 'Files epubs as Genre / Author / Title instead of under Uncategorized. The simple edition of StandardIssue needs its October 2026 update (or later) to find books filed this way.', sw('organize_by_genre'))}`)}
     ${card(`<div class="eyebrow mb-space-sm">Builds</div>
       ${row('Parallel builds', 'How many books are cloned and packaged at once.', sel('build_concurrency', range(1, 6)))}
       ${row('Fetch metadata when building', 'Also read each book’s colophon (publication date, artwork credit). Genres are always fetched — they decide the folder.', sw('build_metadata'))}
