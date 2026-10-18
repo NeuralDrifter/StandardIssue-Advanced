@@ -1,5 +1,5 @@
 // Michael Burgus — https://github.com/NeuralDrifter
-// Reading state (positions + reader settings), stored in reading.json
+// Reading state (positions, bookmarks, reading pace, reader settings), stored in reading.json
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -8,9 +8,21 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 const LAYOUTS: &[&str] = &["paginated", "spread", "scroll"];
-const THEMES: &[&str] = &["light", "sepia", "dark"];
-const FONTS: &[&str] = &["publisher", "serif", "sans"];
+const THEMES: &[&str] = &["obsidian", "parchment", "cream", "oled"];
+const FONTS: &[&str] = &["publisher", "serif", "sans", "mono"];
 const LINE_HEIGHTS: &[&str] = &["compact", "normal", "relaxed"];
+const MEASURES: &[&str] = &["compact", "optimal", "wide"];
+
+const FONT_PX_MIN: f32 = 12.0;
+const FONT_PX_MAX: f32 = 32.0;
+const FONT_PX_DEFAULT: f32 = 18.0;
+
+/// Reading speed used until enough real reading has been measured.
+pub const DEFAULT_WPM: u32 = 250;
+/// Measured seconds needed before the measured pace is trusted.
+const PACE_MIN_SECONDS: f64 = 300.0;
+/// Past this much measured time, old totals are halved so the pace follows recent reading.
+const PACE_DECAY_SECONDS: f64 = 4.0 * 3600.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -18,9 +30,15 @@ pub struct ReaderSettings {
     pub layout: String,
     pub theme: String,
     pub font_family: String,
-    pub font_size: u32,
+    /// Body text size in CSS px (older versions stored a percentage; see `clamp`).
+    pub font_size: f32,
     pub line_height: String,
+    /// Line length: compact / optimal / wide.
+    pub measure: String,
+    pub justify: bool,
+    pub drop_cap: bool,
     pub toc_open: bool,
+    pub typeset_open: bool,
     /// Fields written by later versions are kept, not dropped.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -30,20 +48,37 @@ impl Default for ReaderSettings {
     fn default() -> Self {
         Self {
             layout: "paginated".into(),
-            theme: "light".into(),
+            theme: "obsidian".into(),
             font_family: "publisher".into(),
-            font_size: 100,
+            font_size: FONT_PX_DEFAULT,
             line_height: "normal".into(),
-            toc_open: false,
+            measure: "optimal".into(),
+            justify: true,
+            drop_cap: true,
+            toc_open: true,
+            typeset_open: false,
             extra: Map::new(),
         }
     }
 }
 
 impl ReaderSettings {
-    /// Force every field into its allowed range.
+    /// Force every field into its allowed range, upgrading values written by older versions.
     pub fn clamp(&mut self) {
         let d = Self::default();
+        let legacy_theme = match self.theme.as_str() {
+            "light" => Some("cream"),
+            "sepia" => Some("parchment"),
+            "dark" => Some("obsidian"),
+            _ => None,
+        };
+        if let Some(t) = legacy_theme {
+            self.theme = t.into();
+        }
+        // Older versions stored a percentage (70–200) of the book's own size
+        if self.font_size > 40.0 {
+            self.font_size = FONT_PX_DEFAULT * self.font_size / 100.0;
+        }
         let pick = |v: &mut String, allowed: &[&str], fallback: &str| {
             if !allowed.contains(&v.as_str()) {
                 *v = fallback.to_string();
@@ -53,8 +88,12 @@ impl ReaderSettings {
         pick(&mut self.theme, THEMES, &d.theme);
         pick(&mut self.font_family, FONTS, &d.font_family);
         pick(&mut self.line_height, LINE_HEIGHTS, &d.line_height);
-        let rounded = ((self.font_size + 5) / 10) * 10;
-        self.font_size = rounded.clamp(70, 200);
+        pick(&mut self.measure, MEASURES, &d.measure);
+        self.font_size = if self.font_size.is_finite() {
+            ((self.font_size * 2.0).round() / 2.0).clamp(FONT_PX_MIN, FONT_PX_MAX)
+        } else {
+            FONT_PX_DEFAULT
+        };
     }
 }
 
@@ -67,12 +106,71 @@ pub struct BookProgress {
     pub extra: Map<String, Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Bookmark {
+    pub cfi: String,
+    /// Chapter name shown in the bookmarks list.
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub fraction: f64,
+    #[serde(default)]
+    pub created_at: u64,
+}
+
+/// Accumulated measured reading: words read during page turns and the time it took.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Pace {
+    pub words: f64,
+    pub seconds: f64,
+}
+
+impl Pace {
+    pub fn add(&mut self, words: f64, seconds: f64) {
+        if !(words.is_finite() && seconds.is_finite()) || words <= 0.0 || seconds <= 0.0 {
+            return;
+        }
+        self.words += words;
+        self.seconds += seconds;
+        if self.seconds > PACE_DECAY_SECONDS {
+            self.words /= 2.0;
+            self.seconds /= 2.0;
+        }
+    }
+
+    /// True once enough reading has been timed to trust the measurement.
+    pub fn measured(&self) -> bool {
+        self.seconds >= PACE_MIN_SECONDS && self.words > 0.0
+    }
+
+    /// Measured words per minute, or the default until enough reading has been timed.
+    pub fn wpm(&self) -> u32 {
+        if !self.measured() {
+            return DEFAULT_WPM;
+        }
+        ((self.words / self.seconds * 60.0).round() as u32).clamp(60, 1500)
+    }
+
+    pub fn info(&self) -> PaceInfo {
+        PaceInfo { wpm: self.wpm(), measured: self.measured() }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct PaceInfo {
+    pub wpm: u32,
+    pub measured: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ReadingState {
     pub version: u32,
     pub settings: ReaderSettings,
     pub books: BTreeMap<String, BookProgress>,
+    pub bookmarks: BTreeMap<String, Vec<Bookmark>>,
+    pub pace: Pace,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -83,6 +181,8 @@ impl Default for ReadingState {
             version: 1,
             settings: ReaderSettings::default(),
             books: BTreeMap::new(),
+            bookmarks: BTreeMap::new(),
+            pace: Pace::default(),
             extra: Map::new(),
         }
     }
@@ -159,6 +259,53 @@ impl ReadingStore {
         self.persist(&state)
     }
 
+    pub fn bookmarks(&self, repo: &str) -> Vec<Bookmark> {
+        self.state.lock().unwrap().bookmarks.get(repo).cloned().unwrap_or_default()
+    }
+
+    /// Add a bookmark (replacing one at the same CFI); returns the book's list in reading order.
+    pub fn add_bookmark(&self, repo: &str, mut mark: Bookmark) -> Result<Vec<Bookmark>, String> {
+        mark.fraction = if mark.fraction.is_finite() { mark.fraction.clamp(0.0, 1.0) } else { 0.0 };
+        if mark.created_at == 0 {
+            mark.created_at = crate::instance::unix_now();
+        }
+        let mut state = self.state.lock().unwrap();
+        let list = state.bookmarks.entry(repo.to_string()).or_default();
+        list.retain(|b| b.cfi != mark.cfi);
+        list.push(mark);
+        list.sort_by(|a, b| a.fraction.total_cmp(&b.fraction));
+        let out = list.clone();
+        self.persist(&state)?;
+        Ok(out)
+    }
+
+    pub fn remove_bookmark(&self, repo: &str, cfi: &str) -> Result<Vec<Bookmark>, String> {
+        let mut state = self.state.lock().unwrap();
+        let Some(list) = state.bookmarks.get_mut(repo) else {
+            return Ok(Vec::new());
+        };
+        list.retain(|b| b.cfi != cfi);
+        let out = list.clone();
+        if out.is_empty() {
+            state.bookmarks.remove(repo);
+        }
+        self.persist(&state)?;
+        Ok(out)
+    }
+
+    pub fn pace(&self) -> PaceInfo {
+        self.state.lock().unwrap().pace.info()
+    }
+
+    /// Fold a reading session's measured words and seconds into the pace.
+    pub fn record_pace(&self, words: f64, seconds: f64) -> Result<PaceInfo, String> {
+        let mut state = self.state.lock().unwrap();
+        state.pace.add(words, seconds);
+        let info = state.pace.info();
+        self.persist(&state)?;
+        Ok(info)
+    }
+
     fn persist(&self, state: &ReadingState) -> Result<(), String> {
         let data = serde_json::to_vec_pretty(state).map_err(|e| format!("serialize: {e}"))?;
         write_atomic(&self.path, &data).map_err(|e| format!("write reading.json: {e}"))
@@ -182,8 +329,8 @@ mod tests {
         let s = store_in(t.path());
         s.save_progress("joyce_dubliners", "epubcfi(/6/4!/4/2)", 0.37).unwrap();
         let mut settings = ReaderSettings::default();
-        settings.theme = "sepia".into();
-        settings.font_size = 130;
+        settings.theme = "parchment".into();
+        settings.font_size = 21.5;
         s.save_settings(settings.clone()).unwrap();
 
         let s2 = store_in(t.path());
@@ -200,6 +347,7 @@ mod tests {
         assert!(warning.is_none());
         assert_eq!(s.get_settings(), ReaderSettings::default());
         assert!(s.all_progress().is_empty());
+        assert_eq!(s.pace(), PaceInfo { wpm: DEFAULT_WPM, measured: false });
     }
 
     #[test]
@@ -228,7 +376,7 @@ mod tests {
             &path,
             r#"{"version":1,"annotations":{"x":1},
                 "settings":{"theme":"dark","ai_panel":true},
-                "books":{"a":{"cfi":"c","fraction":0.5,"updated_at":1,"bookmarks":[1]}}}"#,
+                "books":{"a":{"cfi":"c","fraction":0.5,"updated_at":1,"notes":[1]}}}"#,
         )
         .unwrap();
 
@@ -238,8 +386,8 @@ mod tests {
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(v["annotations"]["x"], 1);
         assert_eq!(v["settings"]["ai_panel"], true);
-        assert_eq!(v["settings"]["theme"], "dark");
-        assert_eq!(v["books"]["a"]["bookmarks"][0], 1);
+        assert_eq!(v["settings"]["theme"], "obsidian");
+        assert_eq!(v["books"]["a"]["notes"][0], 1);
         assert_eq!(v["books"]["a"]["cfi"], "c2");
     }
 
@@ -248,15 +396,99 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let s = store_in(t.path());
         let mut bad = ReaderSettings::default();
-        bad.font_size = 999;
+        bad.font_size = 39.0;
         bad.layout = "sideways".into();
+        bad.measure = "huge".into();
         let saved = s.save_settings(bad).unwrap();
-        assert_eq!(saved.font_size, 200);
+        assert_eq!(saved.font_size, 32.0);
         assert_eq!(saved.layout, "paginated");
+        assert_eq!(saved.measure, "optimal");
 
         let mut small = ReaderSettings::default();
-        small.font_size = 64;
-        assert_eq!(s.save_settings(small).unwrap().font_size, 70);
+        small.font_size = 8.0;
+        assert_eq!(s.save_settings(small).unwrap().font_size, 12.0);
+
+        let mut odd = ReaderSettings::default();
+        odd.font_size = 18.3;
+        assert_eq!(s.save_settings(odd).unwrap().font_size, 18.5);
+    }
+
+    #[test]
+    fn legacy_settings_upgraded() {
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("reading.json");
+        std::fs::write(
+            &path,
+            r#"{"version":1,"settings":{"layout":"scroll","theme":"sepia","font_family":"serif",
+                "font_size":120,"line_height":"relaxed","toc_open":false},"books":{}}"#,
+        )
+        .unwrap();
+        let got = store_in(t.path()).get_settings();
+        assert_eq!(got.theme, "parchment");
+        assert_eq!(got.font_size, 21.5); // 18 px × 120 % = 21.6, rounded to the half pixel
+        assert_eq!(got.layout, "scroll");
+        assert!(!got.toc_open);
+        assert!(got.justify && got.drop_cap);
+        assert_eq!(got.measure, "optimal");
+
+        for (old, new) in [("light", "cream"), ("dark", "obsidian")] {
+            let mut s = ReaderSettings::default();
+            s.theme = old.into();
+            s.clamp();
+            assert_eq!(s.theme, new);
+        }
+    }
+
+    #[test]
+    fn bookmarks_add_dedupe_remove_persist() {
+        let t = tempfile::tempdir().unwrap();
+        let s = store_in(t.path());
+        let mark = |cfi: &str, fraction: f64| Bookmark {
+            cfi: cfi.into(),
+            label: format!("at {fraction}"),
+            fraction,
+            created_at: 0,
+        };
+        s.add_bookmark("a", mark("late", 0.8)).unwrap();
+        s.add_bookmark("a", mark("early", 0.1)).unwrap();
+        let list = s.add_bookmark("a", mark("late", 0.8)).unwrap();
+        assert_eq!(list.iter().map(|b| b.cfi.as_str()).collect::<Vec<_>>(), ["early", "late"]);
+        assert!(list.iter().all(|b| b.created_at > 0));
+
+        let s2 = store_in(t.path());
+        assert_eq!(s2.bookmarks("a").len(), 2);
+        assert_eq!(s2.remove_bookmark("a", "early").unwrap().len(), 1);
+        assert!(s2.remove_bookmark("a", "late").unwrap().is_empty());
+        assert!(s2.remove_bookmark("missing", "x").unwrap().is_empty());
+
+        let raw = std::fs::read_to_string(t.path().join("reading.json")).unwrap();
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        assert!(v["bookmarks"].get("a").is_none());
+    }
+
+    #[test]
+    fn pace_needs_enough_reading_and_follows_recent_speed() {
+        let mut p = Pace::default();
+        assert_eq!(p.wpm(), DEFAULT_WPM);
+        p.add(400.0, 120.0); // 200 wpm, but only 2 minutes measured
+        assert_eq!(p.wpm(), DEFAULT_WPM);
+        p.add(1000.0, 300.0);
+        assert_eq!(p.wpm(), 200);
+        p.add(-5.0, 10.0);
+        p.add(10.0, f64::NAN);
+        assert_eq!(p.wpm(), 200);
+
+        // Hours of faster reading pull the average toward the new speed
+        for _ in 0..40 {
+            p.add(3000.0, 600.0); // 300 wpm
+        }
+        assert!(p.seconds <= PACE_DECAY_SECONDS);
+        assert!(p.wpm() > 290, "pace {}", p.wpm());
+
+        let t = tempfile::tempdir().unwrap();
+        let s = store_in(t.path());
+        assert_eq!(s.record_pace(1500.0, 360.0).unwrap(), PaceInfo { wpm: 250, measured: true });
+        assert_eq!(store_in(t.path()).pace().wpm, 250);
     }
 
     #[test]

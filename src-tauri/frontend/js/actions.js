@@ -4,6 +4,7 @@
 import { api } from './api.js'
 import { state, emit, notify } from './state.js'
 import { debounce } from './util.js'
+import Reader from './reader/index.js'
 
 // --- Data refreshes ---
 
@@ -65,6 +66,7 @@ export const refreshSoon = debounce(() => {
 // --- Navigation and filters ---
 
 export function setQuery(patch, { resetPage = true } = {}) {
+  if (Reader.isOpen()) Reader.close()
   Object.assign(state.query, patch)
   if (resetPage) state.query.page = 1
   emit('query')
@@ -72,6 +74,7 @@ export function setQuery(patch, { resetPage = true } = {}) {
 }
 
 export function setRoute(route) {
+  if (Reader.isOpen()) Reader.close()
   state.route = route
   emit('route')
 }
@@ -94,7 +97,7 @@ export function clearSelection() {
 }
 
 export function openReader(repo) {
-  if (repo && window.Reader) window.Reader.open(repo)
+  if (repo) Reader.open(repo)
 }
 
 // --- Builds ---

@@ -252,3 +252,49 @@
     background: linear-gradient(160deg, var(--color-surface-container-highest), var(--color-surface-container-low));
   }
 }
+
+/* --- Reader --- */
+@layer components {
+  /* Page card and its strip follow the reading atmosphere (set from JS) */
+  .r-page { background: var(--page-bg, #181c22); color: var(--page-fg, #dfe2eb); }
+  .r-page-solid { background: var(--page-bg, #181c22); color: var(--page-fg, #dfe2eb); }
+  .r-page-dim { color: var(--page-dim, #99907c); }
+
+  /* Gold-filled slider (font scale, scrubber); --fill is the filled share */
+  .r-range {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    margin: auto 0;
+    border-radius: 9999px;
+    background: linear-gradient(to right, var(--color-primary) var(--fill, 0%), var(--color-surface-container-highest) var(--fill, 0%));
+    cursor: pointer;
+  }
+  .r-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 9999px;
+    background: var(--color-primary);
+    border: 3px solid var(--color-surface-container-low);
+    box-shadow: 0 0 0 1px var(--color-primary), 0 2px 6px rgba(0, 0, 0, .5);
+  }
+  .r-scrub { background: linear-gradient(to right, var(--color-primary) var(--fill, 0%), transparent var(--fill, 0%)),
+    linear-gradient(var(--color-surface-container-highest), var(--color-surface-container-highest)); }
+}
+
+#reader foliate-view { position: absolute; inset: 0; }
+
+/* Running head inside the paginator: small caps line over the text */
+#reader foliate-view::part(head) {
+  color: var(--page-dim, #99907c);
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  opacity: 1;
+}
+
+/* Fullscreen reading hides the app chrome */
+body.reader-full :is(#titlebar, #sidebar, #toolbar) { display: none; }

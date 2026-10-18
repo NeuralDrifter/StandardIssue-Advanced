@@ -12,6 +12,7 @@ import { initGrid, patchBook, rowOf } from './grid.js'
 import { initInspector } from './inspector.js'
 import { initPages } from './pages.js'
 import { $, debounce } from './util.js'
+import Reader from './reader/index.js'
 
 initTitlebar()
 boot()
@@ -97,14 +98,8 @@ function wireEvents() {
   })
   events.opError(({ operation, error }) => notify(`${operation} failed: ${error}`, 'error'))
 
-  // Reader overlay hooks
-  const hookReader = () => {
-    if (!window.Reader) return false
-    window.Reader.onClose = refreshReading
-    window.Reader.onLibraryChanged = refreshSoon
-    return true
-  }
-  if (!hookReader()) window.addEventListener('load', hookReader, { once: true })
+  Reader.onClose = refreshReading
+  Reader.onLibraryChanged = refreshSoon
 
   setInterval(refreshDisk, 5 * 60_000)
 }

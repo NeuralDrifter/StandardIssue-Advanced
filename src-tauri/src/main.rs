@@ -3,7 +3,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use ebook_manager::books::{era_of, repo_name, Book, BookStore};
+use ebook_manager::books::{era_of, repo_name, Book, BookStore, Published};
 use ebook_manager::build::{self, BuildQueue, BuildRecord, BuildRecords, Job, JobEnv, Live, QueueSummary};
 use ebook_manager::catalog;
 use ebook_manager::colophon::COLOPHON_REV;
@@ -12,7 +12,7 @@ use ebook_manager::enrich::{self, META_REV};
 use ebook_manager::instance::{self, unix_now, Acquire, HolderInfo, InstanceLock};
 use ebook_manager::library::{self, MigrationReport};
 use ebook_manager::query::{self, BookFacts, Facets, Query, Status};
-use ebook_manager::reader::{BookProgress, ReaderSettings, ReadingStore};
+use ebook_manager::reader::{BookProgress, Bookmark, PaceInfo, ReaderSettings, ReadingStore};
 use ebook_manager::settings::{Activity, ActivityStore, AppSettings, OpRecord, SettingsStore};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -54,6 +54,12 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Cover image path for the frontend, or "" when there is none on disk.
+    fn cover_path(&self, repo: &str) -> String {
+        let cover = self.store.cover_file(repo);
+        if cover.exists() { cover.to_string_lossy().to_string() } else { String::new() }
+    }
+
     fn loaded(&self) -> Result<&Loaded, String> {
         if !self.ready.load(Ordering::SeqCst) {
             return Err("not ready: another copy of StandardIssue is running".to_string());
@@ -120,11 +126,10 @@ impl AppState {
     fn row(&self, book: &Book, records: &BTreeMap<String, BuildRecord>) -> BookRow {
         let rn = repo_name(book);
         let epub = self.store.epub_file(&rn);
-        let cover = self.store.cover_file(&rn);
         BookRow {
             downloaded: epub.is_some(),
             epub_size: epub.and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len()),
-            cover_path: if cover.exists() { cover.to_string_lossy().to_string() } else { String::new() },
+            cover_path: self.cover_path(&rn),
             era: era_of(book),
             status: self.status_of(&rn, records),
             live: self.queue.live(&rn),
@@ -738,7 +743,11 @@ struct ReaderOpenResponse {
     title: String,
     author: String,
     word_count: i64,
+    published: Option<Published>,
+    cover_path: String,
     progress: Option<BookProgress>,
+    bookmarks: Vec<Bookmark>,
+    pace: PaceInfo,
 }
 
 #[tauri::command]
@@ -751,8 +760,27 @@ fn reader_open(state: State<'_>, repo: String) -> Result<ReaderOpenResponse, Str
         title: book.title,
         author: book.author,
         word_count: book.word_count,
+        published: book.published,
+        cover_path: state.cover_path(&repo),
         progress: reading.progress(&repo),
+        bookmarks: reading.bookmarks(&repo),
+        pace: reading.pace(),
     })
+}
+
+#[tauri::command]
+fn reader_add_bookmark(state: State<'_>, repo: String, bookmark: Bookmark) -> Result<Vec<Bookmark>, String> {
+    state.loaded()?.reading.add_bookmark(&repo, bookmark)
+}
+
+#[tauri::command]
+fn reader_remove_bookmark(state: State<'_>, repo: String, cfi: String) -> Result<Vec<Bookmark>, String> {
+    state.loaded()?.reading.remove_bookmark(&repo, &cfi)
+}
+
+#[tauri::command]
+fn reader_record_pace(state: State<'_>, words: f64, seconds: f64) -> Result<PaceInfo, String> {
+    state.loaded()?.reading.record_pace(words, seconds)
 }
 
 #[tauri::command]
@@ -785,8 +813,7 @@ fn reading_progress_all(state: State<'_>) -> Result<BTreeMap<String, ProgressWit
         .into_iter()
         .map(|(repo, progress)| {
             let title = state.store.get(&repo).map(|b| b.title).unwrap_or_default();
-            let cover = state.store.cover_file(&repo);
-            let cover_path = if cover.exists() { cover.to_string_lossy().to_string() } else { String::new() };
+            let cover_path = state.cover_path(&repo);
             (repo, ProgressWithTitle { progress, title, cover_path })
         })
         .collect())
@@ -877,6 +904,9 @@ fn main() {
             reader_save_progress,
             reader_get_settings,
             reader_save_settings,
+            reader_add_bookmark,
+            reader_remove_bookmark,
+            reader_record_pace,
             reading_progress_all,
         ])
         .run(tauri::generate_context!())

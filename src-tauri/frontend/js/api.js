@@ -33,6 +33,15 @@ export const api = {
   openLibraryFolder: () => invoke('open_library_folder'),
   openUrl: url => invoke('plugin:opener|open_url', { url }),
   readingProgress: () => invoke('reading_progress_all'),
+  buildAndWait: repo => invoke('build_and_wait', { repo }),
+
+  readerOpen: repo => invoke('reader_open', { repo }),
+  readerSaveProgress: (repo, cfi, fraction) => invoke('reader_save_progress', { repo, cfi, fraction }),
+  readerGetSettings: () => invoke('reader_get_settings'),
+  readerSaveSettings: settings => invoke('reader_save_settings', { settings }),
+  readerAddBookmark: (repo, bookmark) => invoke('reader_add_bookmark', { repo, bookmark }),
+  readerRemoveBookmark: (repo, cfi) => invoke('reader_remove_bookmark', { repo, cfi }),
+  readerRecordPace: (words, seconds) => invoke('reader_record_pace', { words, seconds }),
 }
 
 export const events = {
