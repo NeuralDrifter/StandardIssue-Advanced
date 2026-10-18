@@ -1,0 +1,6 @@
+# Keep every text file LF in the repository and the working tree
+* text=auto eol=lf
+*.woff2 binary
+*.png binary
+*.ico binary
+*.icns binary
