@@ -1,0 +1,16 @@
+{
+  "name": "standardissue-advanced",
+  "private": true,
+  "description": "Frontend build tooling (Tailwind CSS) for StandardIssue Advanced",
+  "scripts": {
+    "css:build": "tailwindcss -i src-tauri/styles/app.css -o src-tauri/frontend/dist/app.css --minify",
+    "css:watch": "tailwindcss -i src-tauri/styles/app.css -o src-tauri/frontend/dist/app.css --watch=always"
+  },
+  "devDependencies": {
+    "@fontsource-variable/manrope": "5.3.0",
+    "@fontsource-variable/playfair-display": "5.3.0",
+    "@tailwindcss/cli": "4.3.3",
+    "material-symbols": "0.48.0",
+    "tailwindcss": "4.3.3"
+  }
+}

@@ -1,0 +1,254 @@
+/* Michael Burgus — https://github.com/NeuralDrifter
+   StandardIssue Advanced — "Athenaeum Obsidian" design system (Tailwind v4 entry).
+   Tokens follow stitch_standard_ebooks_fetcher_ui/athenaeum_obsidian/DESIGN.md. */
+
+@import "tailwindcss";
+@source "../frontend/index.html";
+@source "../frontend/js";
+
+/* --- Fonts (bundled, offline) --- */
+@font-face {
+  font-family: "Playfair Display";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("../vendor/fonts/playfair-display-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Playfair Display";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("../vendor/fonts/playfair-display-latin-ext-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Playfair Display";
+  font-style: italic;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("../vendor/fonts/playfair-display-latin-wght-italic.woff2") format("woff2-variations");
+}
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("../vendor/fonts/manrope-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("../vendor/fonts/manrope-latin-ext-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Material Symbols Outlined";
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: block;
+  src: url("../vendor/fonts/material-symbols-outlined.woff2") format("woff2");
+}
+
+@theme {
+  /* Colors */
+  --color-surface: #10141a;
+  --color-surface-dim: #10141a;
+  --color-surface-bright: #353940;
+  --color-surface-container-lowest: #0a0e14;
+  --color-surface-container-low: #181c22;
+  --color-surface-container: #1c2026;
+  --color-surface-container-high: #262a31;
+  --color-surface-container-highest: #31353c;
+  --color-surface-variant: #31353c;
+  --color-on-surface: #dfe2eb;
+  --color-on-surface-variant: #d0c5af;
+  --color-outline: #99907c;
+  --color-outline-variant: #4d4635;
+  --color-primary: #f2ca50;
+  --color-on-primary: #3c2f00;
+  --color-primary-container: #d4af37;
+  --color-on-primary-container: #554300;
+  --color-primary-fixed: #ffe088;
+  --color-primary-fixed-dim: #e9c349;
+  --color-secondary: #b5c8e4;
+  --color-secondary-container: #36485f;
+  --color-on-secondary-container: #a4b6d2;
+  --color-tertiary: #57e989;
+  --color-tertiary-container: #32cc70;
+  --color-on-tertiary: #003919;
+  --color-error: #ffb4ab;
+  --color-error-container: #93000a;
+  --color-on-error-container: #ffdad6;
+
+  /* Type */
+  --font-display: "Playfair Display", Georgia, serif;
+  --font-body: "Manrope", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  --text-display-lg: 2.25rem;
+  --text-display-lg--line-height: 2.75rem;
+  --text-display-lg--letter-spacing: -0.02em;
+  --text-display-lg--font-weight: 700;
+  --text-headline-lg: 1.75rem;
+  --text-headline-lg--line-height: 2.25rem;
+  --text-headline-lg--letter-spacing: -0.015em;
+  --text-headline-lg--font-weight: 600;
+  --text-headline-md: 1.25rem;
+  --text-headline-md--line-height: 1.75rem;
+  --text-headline-md--letter-spacing: -0.01em;
+  --text-headline-md--font-weight: 600;
+  --text-headline-sm: 1.05rem;
+  --text-headline-sm--line-height: 1.5rem;
+  --text-headline-sm--font-weight: 600;
+  --text-body-lg: 1rem;
+  --text-body-lg--line-height: 1.6rem;
+  --text-body-md: 0.875rem;
+  --text-body-md--line-height: 1.45rem;
+  --text-body-sm: 0.75rem;
+  --text-body-sm--line-height: 1.25rem;
+  --text-label-md: 0.8125rem;
+  --text-label-md--line-height: 1.2rem;
+  --text-label-md--letter-spacing: 0.03em;
+  --text-label-md--font-weight: 600;
+  --text-label-sm: 0.6875rem;
+  --text-label-sm--line-height: 1rem;
+  --text-label-sm--letter-spacing: 0.05em;
+  --text-label-sm--font-weight: 600;
+
+  /* Spacing (mockup names) */
+  --spacing-space-xs: 0.25rem;
+  --spacing-space-sm: 0.5rem;
+  --spacing-space-md: 1rem;
+  --spacing-space-lg: 1.5rem;
+  --spacing-space-xl: 2.25rem;
+  --spacing-gutter: 1.25rem;
+  --spacing-gutter-compact: 0.75rem;
+  --spacing-margin: 1.75rem;
+
+  /* Radii: crisp book-binding edges */
+  --radius-sm: 0.125rem;
+  --radius-md: 0.1875rem;
+  --radius-lg: 0.25rem;
+  --radius-xl: 0.5rem;
+  --radius-2xl: 0.75rem;
+
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  @keyframes shimmer {
+    from { background-position: -200% 0; }
+    to { background-position: 200% 0; }
+  }
+}
+
+@layer base {
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    overscroll-behavior: none;
+    background: var(--color-surface-container-lowest);
+    color: var(--color-on-surface);
+    font-family: var(--font-body);
+    font-size: var(--text-body-md);
+    line-height: var(--text-body-md--line-height);
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+  input, select, textarea, .selectable { user-select: text; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: .45; }
+  ::selection { background: var(--color-primary-container); color: var(--color-on-primary-container); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--color-surface-container-highest); border-radius: 6px; border: 2px solid var(--color-surface); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-surface-bright); }
+  [hidden] { display: none !important; }
+}
+
+@layer components {
+  .material-symbols-outlined {
+    font-family: "Material Symbols Outlined";
+    font-weight: normal;
+    font-style: normal;
+    font-size: 18px;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    display: inline-block;
+    white-space: nowrap;
+    direction: ltr;
+    font-feature-settings: "liga";
+    -webkit-font-smoothing: antialiased;
+    font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+    user-select: none;
+  }
+  .icon-fill { font-variation-settings: "FILL" 1, "wght" 400, "GRAD" 0, "opsz" 24; }
+
+  /* Dark glass secondary button */
+  .btn-glass {
+    @apply px-space-sm py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface
+      font-body text-label-sm flex items-center gap-1.5 transition-colors whitespace-nowrap;
+  }
+  .btn-glass-lg {
+    @apply px-space-md py-2 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface
+      text-label-md flex items-center gap-2 transition-all shadow-sm active:scale-95 whitespace-nowrap;
+  }
+  /* Gilded primary button */
+  .btn-gold {
+    @apply px-space-md py-1.5 rounded-lg bg-primary hover:bg-primary-fixed-dim text-on-primary
+      text-label-sm font-bold flex items-center gap-1.5 transition-colors whitespace-nowrap;
+  }
+  .btn-gold-lg {
+    @apply px-space-lg py-2 rounded-lg bg-primary hover:bg-primary-fixed-dim text-on-primary text-label-md font-bold
+      flex items-center gap-2 shadow-lg shadow-primary/20 transition-all hover:scale-[1.02] active:scale-95 whitespace-nowrap;
+  }
+  .btn-danger {
+    @apply px-space-sm py-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-error text-label-sm font-semibold
+      flex items-center gap-1.5 transition-colors whitespace-nowrap;
+  }
+  .chip {
+    @apply text-label-sm bg-surface-container px-1.5 py-0.5 rounded-lg;
+  }
+  /* Frosted status pill on covers */
+  .badge {
+    @apply absolute top-2 right-2 px-2 py-0.5 rounded-full bg-surface-dim/80 backdrop-blur-md border
+      flex items-center gap-1 shadow-md text-[10px] uppercase font-bold tracking-wider;
+  }
+  .dot { @apply w-1.5 h-1.5 rounded-full inline-block shrink-0; }
+  .eyebrow { @apply text-label-sm uppercase tracking-wider text-outline; }
+  .field {
+    @apply w-full px-3 py-1.5 bg-surface-container rounded-lg text-body-sm text-on-surface placeholder:text-outline
+      focus:outline-none focus:ring-1 focus:ring-primary shadow-inner;
+  }
+  .toggle {
+    @apply relative inline-flex h-4 w-7 shrink-0 rounded-full bg-surface-container-highest transition-colors;
+  }
+  .toggle::after {
+    content: "";
+    @apply absolute top-0.5 left-0.5 h-3 w-3 rounded-full bg-outline transition-all;
+  }
+  .toggle[aria-checked="true"] { @apply bg-primary-container; }
+  .toggle[aria-checked="true"]::after { @apply left-3.5 bg-on-primary; }
+  .menu {
+    @apply absolute z-50 mt-1 min-w-48 max-h-80 overflow-y-auto rounded-xl bg-surface-container-high p-1 shadow-2xl
+      ring-1 ring-black/40;
+  }
+  .menu-item {
+    @apply w-full flex items-center justify-between gap-3 px-2 py-1.5 rounded-lg text-left text-body-sm
+      text-on-surface-variant hover:bg-surface-bright hover:text-on-surface;
+  }
+  .menu-item[aria-selected="true"] { @apply text-primary; }
+  .kv-row { @apply flex justify-between items-start gap-3 py-1 border-b border-surface-container-highest/40 last:border-0; }
+  .kv-key { @apply text-outline shrink-0; }
+  .kv-val { @apply text-on-surface text-right min-w-0 break-words; }
+  .cover-spine {
+    @apply absolute inset-y-0 left-0 w-3 bg-gradient-to-r from-black/50 via-white/5 to-transparent pointer-events-none;
+  }
+  .shelf-shadow { box-shadow: 0 12px 24px -4px rgba(0, 0, 0, .8), 0 4px 8px -2px rgba(0, 0, 0, .6); }
+  .cover-fallback {
+    background: linear-gradient(160deg, var(--color-surface-container-highest), var(--color-surface-container-low));
+  }
+}

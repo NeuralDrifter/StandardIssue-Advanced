@@ -13,7 +13,7 @@
   --r-foot: 40px;
 
   position: fixed;
-  inset: 0;
+  inset: 2rem 0 0 0; /* below the custom title bar */
   z-index: 500;
   background: var(--r-bg);
   color: var(--r-fg);

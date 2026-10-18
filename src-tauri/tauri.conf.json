@@ -1,21 +1,27 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
-  "productName": "Standard Ebooks Manager",
+  "productName": "StandardIssue Advanced",
   "version": "1.0.0",
   "identifier": "com.neuraldrifter.ebook-manager",
   "build": {
     "frontendDist": "frontend",
-    "beforeBuildCommand": "",
-    "beforeDevCommand": ""
+    "beforeDevCommand": {
+      "script": "npm run css:watch",
+      "wait": false
+    },
+    "beforeBuildCommand": "npm run css:build"
   },
   "app": {
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Standard Ebooks Manager",
-        "width": 1280,
+        "title": "StandardIssue Advanced",
+        "width": 1440,
         "height": 900,
+        "minWidth": 1100,
+        "minHeight": 700,
         "resizable": true,
+        "decorations": false,
         "url": "index.html"
       }
     ],

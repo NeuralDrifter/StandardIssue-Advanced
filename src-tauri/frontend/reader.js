@@ -481,14 +481,14 @@ function button(label, onClick) {
 
 function showMissing(repo) {
   showMessage('The epub file for this book was not found.',
-    button('Download again', async () => {
+    button('Build again', async () => {
       showMessage('Building epub…')
       try {
-        await invoke('download_single', { repo })
+        await invoke('build_and_wait', { repo })
         Reader.onLibraryChanged?.()
         await open(repo)
       } catch (err) {
-        showMessage(`Download failed: ${err}`)
+        showMessage(`Build failed: ${err}`)
       }
     }))
 }

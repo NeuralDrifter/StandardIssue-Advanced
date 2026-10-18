@@ -40,20 +40,36 @@ pub struct BuildRecord {
 
 pub type BuildRecords = JsonStore<BTreeMap<String, BuildRecord>>;
 
-/// Lines of one build, timestamped relative to its start.
+/// Lines of one build, timestamped relative to its start. When given a file,
+/// every line is appended as it happens so the UI can tail a running build.
 pub struct BuildLog {
     start: Instant,
     lines: Mutex<Vec<String>>,
+    file: Mutex<Option<std::fs::File>>,
 }
 
 impl BuildLog {
     pub fn new() -> Self {
-        Self { start: Instant::now(), lines: Mutex::new(Vec::new()) }
+        Self { start: Instant::now(), lines: Mutex::new(Vec::new()), file: Mutex::new(None) }
+    }
+
+    /// Log to `path` too, replacing the previous build's log.
+    pub fn to_file(path: &Path) -> Self {
+        let log = Self::new();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        *log.file.lock().unwrap() = std::fs::File::create(path).ok();
+        log
     }
 
     pub fn line(&self, msg: impl AsRef<str>) {
         let t = self.start.elapsed().as_secs_f32();
-        self.lines.lock().unwrap().push(format!("[+{t:5.1}s] {}", msg.as_ref()));
+        let line = format!("[+{t:5.1}s] {}", msg.as_ref());
+        if let Some(f) = self.file.lock().unwrap().as_mut() {
+            let _ = writeln!(f, "{line}");
+        }
+        self.lines.lock().unwrap().push(line);
     }
 
     pub fn text(&self) -> String {
@@ -291,17 +307,15 @@ pub struct JobEnv<'a> {
     pub cancel: &'a AtomicBool,
 }
 
-/// Enrich (as needed), fetch the cover (if asked), then build. Writes the log
+/// Enrich (as needed), fetch the cover (if asked), then build. Streams the log
 /// file and returns `(sha, duration_ms)`.
 pub async fn run_job(env: &JobEnv<'_>, job: &Job, progress: &Progress) -> Result<(String, u64), String> {
-    let log = BuildLog::new();
+    let log = BuildLog::to_file(&log_path(env.logs_dir, &job.repo));
     let result = run_job_inner(env, job, progress, &log).await;
     match &result {
         Ok(_) => log.line("Build succeeded"),
         Err(e) => log.line(format!("Build failed: {e}")),
     }
-    let _ = std::fs::create_dir_all(env.logs_dir);
-    let _ = std::fs::write(log_path(env.logs_dir, &job.repo), log.text());
     result.map(|sha| (sha, log.elapsed_ms()))
 }
 
@@ -524,6 +538,19 @@ mod tests {
 
     fn job(repo: &str) -> Job {
         Job { repo: repo.into(), title: repo.to_uppercase(), metadata: true, covers: true, force: false }
+    }
+
+    #[test]
+    fn build_log_streams_to_file() {
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("logs/a.log");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "old build").unwrap();
+        let log = BuildLog::to_file(&path);
+        log.line("cloning");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("cloning") && !text.contains("old build"));
+        assert_eq!(log.text().lines().count(), 1);
     }
 
     #[test]
