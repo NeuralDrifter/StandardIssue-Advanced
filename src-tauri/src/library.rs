@@ -1,6 +1,7 @@
 // Michael Burgus — https://github.com/NeuralDrifter
 // Shared library location and one-time migration from the old per-copy folders
 
+use crate::books::{epub_path, repo_name, BookStore};
 use serde::Serialize;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -66,6 +67,53 @@ pub fn migrate_dir(src: &Path, dst: &Path, report: &mut MigrationReport) {
     {
         if entry.file_type().is_dir() {
             let _ = std::fs::remove_dir(entry.path());
+        }
+    }
+}
+
+/// Move epubs that are not where `epub_path` now puts them (e.g. still under
+/// `Uncategorized/` after enrichment found their genre). Only runs while the
+/// "organize by genre" setting is on. Existing files at the target are left alone
+/// and reported as conflicts.
+pub fn relocate_epubs(store: &BookStore, report: &mut MigrationReport) {
+    if !store.organize() {
+        return;
+    }
+    let moves: Vec<(String, std::path::PathBuf, std::path::PathBuf)> = store.read(|books| {
+        books
+            .iter()
+            .filter_map(|b| {
+                let target = epub_path(&store.epubs_dir, b, true);
+                if target.as_os_str().is_empty() || target.exists() {
+                    return None;
+                }
+                let rn = repo_name(b);
+                let current = store.epub_file(&rn)?;
+                (current != target).then_some((rn, current, target))
+            })
+            .collect()
+    });
+
+    let mut emptied = Vec::new();
+    for (rn, from, to) in moves {
+        let label = from.strip_prefix(&store.epubs_dir).unwrap_or(&from).to_string_lossy().to_string();
+        match move_file(&from, &to) {
+            Ok(()) => {
+                report.moved += 1;
+                store.refresh_one(&rn);
+                if let Some(parent) = from.parent() {
+                    emptied.push(parent.to_path_buf());
+                }
+            }
+            Err(e) => report.failures.push(format!("{label}: {e}")),
+        }
+    }
+    // Remove folders the moves emptied, walking up but never past the library root
+    for mut dir in emptied {
+        while dir.starts_with(&store.epubs_dir) && dir != store.epubs_dir && std::fs::remove_dir(&dir).is_ok() {
+            if !dir.pop() {
+                break;
+            }
         }
     }
 }
@@ -159,5 +207,36 @@ mod tests {
         migrate_dir(&src, &dst, &mut r);
 
         assert!(!src.exists());
+    }
+
+    #[test]
+    fn relocate_moves_uncategorized_into_genre_only_when_organizing() {
+        use crate::books::{Book, BookStore};
+        let t = tempfile::tempdir().unwrap();
+        let store = BookStore::new(t.path().join("books.json"), t.path().join("epubs"), t.path().join("covers"));
+        let book = Book {
+            title: "The Lost World".into(),
+            author: "Arthur Conan Doyle".into(),
+            repo_name: "doyle_lost-world".into(),
+            categories: vec!["Fantasy".into()],
+            ..Default::default()
+        };
+        store.replace_all(vec![book.clone()]);
+        let old = epub_path(&store.epubs_dir, &book, false);
+        write(&old, "epub");
+        store.refresh_download_status();
+
+        let mut r = MigrationReport::default();
+        relocate_epubs(&store, &mut r);
+        assert_eq!(r.moved, 0, "off by default");
+
+        store.set_organize(true);
+        relocate_epubs(&store, &mut r);
+        let new = epub_path(&store.epubs_dir, &book, true);
+        assert_eq!(r.moved, 1);
+        assert!(new.exists() && !old.exists());
+        assert!(!store.epubs_dir.join("Uncategorized").exists(), "emptied folders removed");
+        assert_eq!(store.epub_file("doyle_lost-world"), Some(new));
+        assert!(store.epubs_dir.exists());
     }
 }

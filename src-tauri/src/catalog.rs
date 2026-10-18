@@ -1,9 +1,8 @@
 // Michael Burgus — https://github.com/NeuralDrifter
 // GitHub catalog sync — fetches all ebook repos from standardebooks org
 
-use crate::books::{repo_name, BookStore, Book};
+use crate::books::{BookStore, Book};
 use serde::Deserialize;
-use std::collections::HashMap;
 
 const ORG: &str = "standardebooks";
 const EBOOK_MARKER: &str = "Standard Ebooks edition";
@@ -15,31 +14,47 @@ struct GhRepo {
     description: Option<String>,
 }
 
-/// Fetch all ebook repos from the GitHub org, paginated.
+/// Fetch all ebook repos from the GitHub org, paginated. Also returns the
+/// remaining API rate limit reported by GitHub.
 async fn fetch_catalog(
     client: &reqwest::Client,
+    token: &str,
     progress: &impl Fn(String),
-) -> Result<Vec<Book>, String> {
+) -> Result<(Vec<Book>, Option<u64>), String> {
     progress("Fetching repo list from GitHub...".into());
 
     let mut all_repos = Vec::new();
     let mut page = 1u32;
+    let mut rate_remaining = None;
 
     loop {
         let url = format!(
             "https://api.github.com/orgs/{ORG}/repos?per_page=100&page={page}"
         );
 
-        let resp = client
+        let mut req = client
             .get(&url)
             .header("Accept", "application/vnd.github.v3+json")
-            .header("User-Agent", "ebook-manager/1.0")
-            .send()
-            .await
-            .map_err(|e| format!("GitHub API error: {e}"))?;
+            .header("User-Agent", "StandardIssue/1.0");
+        if !token.is_empty() {
+            req = req.bearer_auth(token);
+        }
+        let resp = req.send().await.map_err(|e| format!("GitHub API error: {e}"))?;
+
+        let remaining = resp
+            .headers()
+            .get("x-ratelimit-remaining")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse().ok());
+        rate_remaining = remaining.or(rate_remaining);
 
         if !resp.status().is_success() {
-            return Err(format!("GitHub API HTTP {}", resp.status()));
+            let hint = if remaining == Some(0) {
+                " — rate limit reached; add a GitHub token in Settings or try again later"
+            } else {
+                ""
+            };
+            return Err(format!("GitHub API HTTP {}{hint}", resp.status()));
         }
 
         let batch: Vec<GhRepo> = resp
@@ -92,53 +107,21 @@ async fn fetch_catalog(
     }
 
     progress(format!("Found {} books on GitHub.", books.len()));
-    Ok(books)
+    Ok((books, rate_remaining))
 }
 
 /// Merge fresh catalog with existing books, preserving enriched metadata.
 pub async fn sync_catalog(
     store: &BookStore,
     client: &reqwest::Client,
+    token: &str,
     progress: impl Fn(String),
 ) -> Result<serde_json::Value, String> {
-    let existing = store.all();
-    let mut existing_by_repo: HashMap<String, Book> = HashMap::with_capacity(existing.len());
-    for b in &existing {
-        let rn = repo_name(b);
-        if !rn.is_empty() {
-            existing_by_repo.insert(rn, b.clone());
-        }
-    }
-
-    let fresh = fetch_catalog(client, &progress).await?;
-
-    let mut fresh_repos: HashMap<String, bool> = HashMap::with_capacity(fresh.len());
-    for b in &fresh {
-        fresh_repos.insert(b.repo_name.clone(), true);
-    }
-
-    let mut updated = Vec::new();
-    let mut new_count = 0usize;
-    for book in &fresh {
-        if let Some(existing) = existing_by_repo.get(&book.repo_name) {
-            updated.push(existing.clone()); // preserve enriched metadata
-        } else {
-            new_count += 1;
-            updated.push(book.clone());
-        }
-    }
-
-    let mut removed_count = 0usize;
-    for rn in existing_by_repo.keys() {
-        if !fresh_repos.contains_key(rn) {
-            removed_count += 1;
-        }
-    }
-
-    store.set_books(updated.clone());
+    let (fresh, rate_remaining) = fetch_catalog(client, token, &progress).await?;
+    let (new_count, removed_count, total) = store.merge_catalog(fresh);
     store.save()?;
+    store.refresh_download_status();
 
-    let total = updated.len();
     progress(format!(
         "Sync complete: {new_count} new, {removed_count} removed, {total} total"
     ));
@@ -147,6 +130,7 @@ pub async fn sync_catalog(
         "new": new_count,
         "removed": removed_count,
         "total": total,
+        "rate_remaining": rate_remaining,
     }))
 }
 

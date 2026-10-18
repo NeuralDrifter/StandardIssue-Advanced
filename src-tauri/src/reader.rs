@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 const LAYOUTS: &[&str] = &["paginated", "spread", "scroll"];
@@ -165,17 +165,12 @@ impl ReadingStore {
     }
 }
 
-/// Write to a sibling temp file, then rename over the target, so a crash never
-/// leaves a half-written file.
-pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, data)?;
-    std::fs::rename(&tmp, path)
-}
+pub use crate::fsutil::write_atomic;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn store_in(dir: &Path) -> ReadingStore {
         ReadingStore::open(dir.join("reading.json")).0

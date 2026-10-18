@@ -1,8 +1,12 @@
 pub mod books;
+pub mod build;
 pub mod catalog;
-pub mod enrich;
+pub mod colophon;
 pub mod covers;
-pub mod download;
+pub mod enrich;
+pub mod fsutil;
 pub mod instance;
 pub mod library;
+pub mod query;
 pub mod reader;
+pub mod settings;

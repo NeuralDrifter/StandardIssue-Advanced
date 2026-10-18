@@ -8,7 +8,7 @@ use image::GenericImageView;
 use regex::Regex;
 use std::io::Cursor;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Semaphore;
 
@@ -32,12 +32,10 @@ pub async fn fetch_all_covers(
     client: &reqwest::Client,
     covers_dir: &Path,
     concurrency: usize,
-    progress: impl Fn(usize, usize, String, String) + Send + Sync + 'static,
+    progress: impl Fn(usize, usize, String, String),
     cancel: Arc<AtomicBool>,
 ) -> CoverResult {
     std::fs::create_dir_all(covers_dir).ok();
-
-    let books = store.all();
 
     // Filter to books needing covers
     struct Job {
@@ -47,6 +45,7 @@ pub async fn fetch_all_covers(
 
     let mut to_fetch = Vec::new();
     let mut cached = 0usize;
+    let books = store.all();
     for b in &books {
         let rn = repo_name(b);
         if rn.is_empty() {
@@ -64,61 +63,45 @@ pub async fn fetch_all_covers(
     }
 
     let total = to_fetch.len();
-    let fetched = Arc::new(AtomicUsize::new(0));
-    let errors = Arc::new(AtomicUsize::new(0));
-    let sem = Arc::new(Semaphore::new(concurrency));
-    let progress = Arc::new(progress);
-
-    let mut handles = Vec::new();
-
-    for (i, job) in to_fetch.iter().enumerate() {
-        if cancel.load(Ordering::SeqCst) {
-            break;
-        }
-
-        let permit = sem.clone().acquire_owned().await.unwrap();
-        let client = client.clone();
-        let cancel = cancel.clone();
-        let fetched = fetched.clone();
-        let errors = errors.clone();
-        let progress = progress.clone();
-        let rn = job.repo_name.clone();
-        let title = job.title.clone();
+    let sem = Arc::new(Semaphore::new(concurrency.max(1)));
+    let mut set = tokio::task::JoinSet::new();
+    for job in to_fetch {
+        let (sem, client, cancel) = (sem.clone(), client.clone(), cancel.clone());
         let covers_dir = covers_dir.to_path_buf();
-
-        let handle = tokio::spawn(async move {
-            let _permit = permit;
-
+        set.spawn(async move {
+            let _permit = sem.acquire_owned().await.ok()?;
             if cancel.load(Ordering::SeqCst) {
-                return;
+                return None;
             }
-
-            match fetch_and_save_cover(&client, &rn, &covers_dir).await {
-                Ok(()) => {
-                    fetched.fetch_add(1, Ordering::Relaxed);
-                    progress(i + 1, total, title, "fetched".into());
-                }
-                Err(e) => {
-                    errors.fetch_add(1, Ordering::Relaxed);
-                    progress(i + 1, total, title, format!("error: {e}"));
-                }
-            }
+            let r = fetch_and_save_cover(&client, &job.repo_name, &covers_dir).await;
+            Some((job.title, r))
         });
-        handles.push(handle);
     }
 
-    for handle in handles {
-        let _ = handle.await;
+    let (mut done, mut fetched, mut errors) = (0, 0, 0);
+    while let Some(joined) = set.join_next().await {
+        let Ok(Some((title, r))) = joined else { continue };
+        done += 1;
+        match r {
+            Ok(()) => {
+                fetched += 1;
+                progress(done, total, title, "fetched".into());
+            }
+            Err(e) => {
+                errors += 1;
+                progress(done, total, title, format!("error: {e}"));
+            }
+        }
     }
 
     CoverResult {
-        fetched: fetched.load(Ordering::Relaxed),
+        fetched,
         cached,
-        errors: errors.load(Ordering::Relaxed),
+        errors,
     }
 }
 
-async fn fetch_and_save_cover(
+pub async fn fetch_and_save_cover(
     client: &reqwest::Client,
     repo: &str,
     covers_dir: &Path,
