@@ -18,6 +18,7 @@ const MAX_DEFINE_CHARS = 40
 let pop = null        // popover element
 let target = null     // { cfi, text, existing } the popover acts on
 let openedAt = 0
+let quietUntil = 0    // no selection popover before this (a double-click looks a word up instead)
 let editing = null    // cfi whose note is being edited in the panel
 let hooks = {}        // { onChange, onDefine }
 
@@ -59,6 +60,7 @@ const draw = a => R.view?.addAnnotation({ value: a.cfi, color: a.color }).catch(
 export function onPageSelection(doc, index) {
   // Selection settles after the event; read it on the next frame
   requestAnimationFrame(() => {
+    if (Date.now() < quietUntil) return
     const sel = doc.getSelection()
     if (!sel || sel.isCollapsed || !sel.rangeCount) return
     const range = sel.getRangeAt(0)
@@ -73,6 +75,12 @@ export function onPageSelection(doc, index) {
 export const popoverJustOpened = () => Date.now() - openedAt < 300
 
 export const popoverOpen = () => !!pop && !pop.hidden
+
+/** Close the popover and keep it from opening for the selection being made right now. */
+export function suppressPopover() {
+  quietUntil = Date.now() + 300
+  hidePopover()
+}
 
 export function hidePopover() {
   if (pop) pop.hidden = true

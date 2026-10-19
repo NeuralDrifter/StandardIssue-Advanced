@@ -34,8 +34,7 @@ async fn fetch_catalog(
 
         let mut req = client
             .get(&url)
-            .header("Accept", "application/vnd.github.v3+json")
-            .header("User-Agent", "StandardIssue/1.0");
+            .header("Accept", "application/vnd.github.v3+json");
         if !token.is_empty() {
             req = req.bearer_auth(token);
         }

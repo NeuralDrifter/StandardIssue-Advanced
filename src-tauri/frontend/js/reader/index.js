@@ -11,7 +11,8 @@ import { loadContents, contentsShell, renderContents, markContents, handleConten
 import { resetSearch, searchHtml, handleSearchSubmit, handleSearchClick, focusSearch } from './search.js'
 import { bookmarkHere, toggleBookmark, bookmarksHtml, handleBookmarksClick } from './bookmarks.js'
 import { startPace, trackPace, stopPace } from './pace.js'
-import { initAnnotations, attachAnnotations, onPageSelection, popoverJustOpened, popoverOpen, hidePopover, annotationsHtml, handleAnnotationsClick, handleAnnotationsSubmit, resetAnnotations } from './annotations.js'
+import { define, resetLexicon, lexiconHtml, handleLexiconClick } from './lexicon.js'
+import { initAnnotations, attachAnnotations, onPageSelection, popoverJustOpened, popoverOpen, hidePopover, suppressPopover, annotationsHtml, handleAnnotationsClick, handleAnnotationsSubmit, resetAnnotations } from './annotations.js'
 
 const { convertFileSrc } = window.__TAURI__.core
 const win = window.__TAURI__.window.getCurrentWindow()
@@ -57,6 +58,7 @@ function build() {
           <button data-act="annotations" title="Highlights and notes (N)" class="r-tool flex items-center gap-1 h-8 px-2 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface">
             ${icon('ink_highlighter', 'text-[18px]')}<span data-ann-count class="text-[10px] font-semibold min-w-4 px-1 rounded-md bg-secondary-container text-on-secondary-container"></span>
           </button>
+          ${tool('lexicon', 'dictionary', '', 'Dictionary (double-click a word)')}
           ${tool('fullscreen', 'fullscreen', '', 'Fullscreen (F)')}
         </div>
       </div>
@@ -126,6 +128,7 @@ function build() {
       renderMarks()
       if (R.panel === 'annotations') renderPanel()
     },
+    onDefine: lookUp,
   })
 }
 
@@ -138,6 +141,7 @@ async function onClick(e) {
     case 'search': return togglePanel('search')
     case 'bookmarks': return togglePanel('bookmarks')
     case 'annotations': return togglePanel('annotations')
+    case 'lexicon': return togglePanel('lexicon')
     case 'bookmark':
       await toggleBookmark()
       renderMarks()
@@ -162,6 +166,7 @@ async function onClick(e) {
     renderPanel()
     renderMarks()
   }
+  if (R.panel === 'lexicon' && handleLexiconClick(e, renderPanel)) return
   if (R.panel === 'annotations' && (await handleAnnotationsClick(e)) === 'rerender') {
     renderPanel()
     renderMarks()
@@ -281,6 +286,7 @@ async function close({ keepShell = false } = {}) {
   await stopPace()
   resetSearch()
   resetAnnotations()
+  resetLexicon()
   R.view?.close()
   R.view?.remove()
   Object.assign(R, { view: null, book: null, info: null, repo: null, position: null, fractions: [], bookmarks: [], annotations: [], backCfi: null })
@@ -379,7 +385,7 @@ function renderLayout() {
   rq('[data-left]').hidden = !R.settings.toc_open
   rq('[data-right]').hidden = !R.panel
   for (const [act, on] of [['contents', R.settings.toc_open], ['typeset', R.panel === 'typeset'],
-    ['search', R.panel === 'search'], ['bookmarks', R.panel === 'bookmarks'], ['annotations', R.panel === 'annotations']]) {
+    ['search', R.panel === 'search'], ['bookmarks', R.panel === 'bookmarks'], ['annotations', R.panel === 'annotations'], ['lexicon', R.panel === 'lexicon']]) {
     const b = rq(`[data-act="${act}"]`)
     b.classList.toggle('text-primary', on)
     b.classList.toggle('bg-surface-container', on)
@@ -390,7 +396,20 @@ function renderLayout() {
 function renderPanel() {
   const el = rq('[data-panel]')
   if (!R.panel || !R.info) return
-  el.innerHTML = { typeset: typesetHtml, search: searchHtml, bookmarks: bookmarksHtml, annotations: annotationsHtml }[R.panel]()
+  el.innerHTML = { typeset: typesetHtml, search: searchHtml, bookmarks: bookmarksHtml, annotations: annotationsHtml, lexicon: lexiconHtml }[R.panel]()
+}
+
+/** Show the dictionary card for a word. */
+function lookUp(word) {
+  if (R.panel !== 'lexicon') {
+    R.panel = 'lexicon'
+    if (R.settings.typeset_open) {
+      R.settings = { ...R.settings, typeset_open: false }
+      saveSettings()
+    }
+    renderLayout()
+  }
+  define(word, renderPanel)
 }
 
 function toggleContents() {
@@ -495,6 +514,13 @@ function onSectionLoad({ detail: { doc, index } }) {
   doc.addEventListener('pointerdown', () => hidePopover())
   doc.addEventListener('pointerup', () => onPageSelection(doc, index))
   doc.addEventListener('keyup', e => e.shiftKey && onPageSelection(doc, index))
+  doc.addEventListener('dblclick', e => {
+    if (e.target.closest?.('a')) return
+    const text = doc.getSelection()?.toString().trim()
+    if (!text || /\s/.test(text)) return
+    suppressPopover()
+    lookUp(text)
+  })
 }
 
 function onPageClick(e, doc) {

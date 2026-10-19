@@ -8,6 +8,7 @@ use ebook_manager::build::{self, BuildQueue, BuildRecord, BuildRecords, Job, Job
 use ebook_manager::catalog;
 use ebook_manager::colophon::COLOPHON_REV;
 use ebook_manager::covers;
+use ebook_manager::dictionary::{Dictionary, Entry, Lookup};
 use ebook_manager::enrich::{self, META_REV};
 use ebook_manager::instance::{self, unix_now, Acquire, HolderInfo, InstanceLock};
 use ebook_manager::library::{self, MigrationReport};
@@ -26,6 +27,12 @@ use tauri_plugin_opener::OpenerExt;
 
 /// Which edition this build is. Shown to the other edition while this one holds the lock.
 const EDITION: &str = "Advanced";
+/// Sent with every web request; Wikimedia asks clients to identify themselves.
+const USER_AGENT: &str = concat!(
+    "StandardIssue-Advanced/",
+    env!("CARGO_PKG_VERSION"),
+    " (https://github.com/NeuralDrifter)"
+);
 const OP_LOG_LINES: usize = 500;
 /// Per-book progress events are sent at most this often (phase changes always go out).
 const PROGRESS_EVERY: Duration = Duration::from_millis(100);
@@ -36,6 +43,7 @@ struct Loaded {
     settings: SettingsStore,
     activity: ActivityStore,
     records: BuildRecords,
+    dictionary: Dictionary,
 }
 
 pub struct AppState {
@@ -721,12 +729,14 @@ async fn instance_status(state: State<'_>) -> Result<StatusResponse, String> {
     warn(w);
     let (records, w) = BuildRecords::open(dd.join("builds.json"));
     warn(w);
+    let (dictionary, w) = Dictionary::open(dd.join("dictionary.json"));
+    warn(w);
 
     state.store.set_organize(settings.get().organize_by_genre);
     if let Err(e) = state.store.load() {
         warn(Some(e));
     }
-    let _ = state.loaded.set(Loaded { reading, settings, activity, records });
+    let _ = state.loaded.set(Loaded { reading, settings, activity, records, dictionary });
     state.ready.store(true, Ordering::SeqCst);
 
     let refiled = state.relocate();
@@ -828,6 +838,16 @@ fn reader_save_settings(state: State<'_>, settings: ReaderSettings) -> Result<Re
     state.loaded()?.reading.save_settings(settings)
 }
 
+/// Definition of a word from Wiktionary (cached). Ok(None) when there is no entry for it.
+#[tauri::command]
+async fn dictionary_lookup(state: State<'_>, word: String) -> Result<Option<Entry>, String> {
+    let dictionary = &state.loaded()?.dictionary;
+    Ok(match dictionary.lookup(&state.client, &word).await? {
+        Lookup::Found(entry) => Some(entry),
+        Lookup::NotFound => None,
+    })
+}
+
 #[derive(Serialize)]
 struct ProgressWithTitle {
     #[serde(flatten)]
@@ -896,7 +916,11 @@ fn main() {
                 store,
                 operation: Mutex::new(None),
                 cancel: Arc::new(AtomicBool::new(false)),
-                client: reqwest::Client::builder().timeout(Duration::from_secs(30)).build().unwrap(),
+                client: reqwest::Client::builder()
+                    .timeout(Duration::from_secs(30))
+                    .user_agent(USER_AGENT)
+                    .build()
+                    .unwrap(),
                 queue: BuildQueue::default(),
                 op_log: Mutex::new(VecDeque::new()),
                 ready: AtomicBool::new(false),
@@ -941,6 +965,7 @@ fn main() {
             reader_export_annotations,
             reader_record_pace,
             reading_progress_all,
+            dictionary_lookup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

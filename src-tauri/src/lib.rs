@@ -3,6 +3,7 @@ pub mod build;
 pub mod catalog;
 pub mod colophon;
 pub mod covers;
+pub mod dictionary;
 pub mod enrich;
 pub mod fsutil;
 pub mod instance;

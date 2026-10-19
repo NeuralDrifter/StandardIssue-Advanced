@@ -14,7 +14,7 @@ export const R = {
   annotations: [],   // highlights and notes, in reading order
   pace: { wpm: 250, measured: false },
   get wpm() { return this.pace.wpm },
-  panel: null,       // right panel: 'typeset' | 'search' | 'bookmarks' | 'annotations' | null
+  panel: null,       // right panel: 'typeset' | 'search' | 'bookmarks' | 'annotations' | 'lexicon' | null
   backCfi: null,     // where to return after following an internal link
 }
 

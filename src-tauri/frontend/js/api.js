@@ -45,6 +45,7 @@ export const api = {
   readerRemoveAnnotation: (repo, cfi) => invoke('reader_remove_annotation', { repo, cfi }),
   readerExportAnnotations: repo => invoke('reader_export_annotations', { repo }),
   readerRecordPace: (words, seconds) => invoke('reader_record_pace', { words, seconds }),
+  dictionaryLookup: word => invoke('dictionary_lookup', { word }),
 }
 
 export const events = {
