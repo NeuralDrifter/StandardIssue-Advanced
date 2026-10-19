@@ -100,6 +100,12 @@ pub fn relocate_epubs(store: &BookStore, report: &mut MigrationReport) {
         match move_file(&from, &to) {
             Ok(()) => {
                 report.moved += 1;
+                // Kobo / Kindle copies made from the epub go with it
+                for (a, b) in crate::formats::companions(&from).into_iter().zip(crate::formats::companions(&to)) {
+                    if a.is_file() && !b.exists() {
+                        let _ = move_file(&a, &b);
+                    }
+                }
                 store.refresh_one(&rn);
                 if let Some(parent) = from.parent() {
                     emptied.push(parent.to_path_buf());
@@ -224,6 +230,8 @@ mod tests {
         store.replace_all(vec![book.clone()]);
         let old = epub_path(&store.epubs_dir, &book, false);
         write(&old, "epub");
+        let old_kepub = crate::kepub::kepub_path(&old);
+        write(&old_kepub, "kepub");
         store.refresh_download_status();
 
         let mut r = MigrationReport::default();
@@ -235,6 +243,7 @@ mod tests {
         let new = epub_path(&store.epubs_dir, &book, true);
         assert_eq!(r.moved, 1);
         assert!(new.exists() && !old.exists());
+        assert!(crate::kepub::kepub_path(&new).exists() && !old_kepub.exists(), "kepub moved with it");
         assert!(!store.epubs_dir.join("Uncategorized").exists(), "emptied folders removed");
         assert_eq!(store.epub_file("doyle_lost-world"), Some(new));
         assert!(store.epubs_dir.exists());

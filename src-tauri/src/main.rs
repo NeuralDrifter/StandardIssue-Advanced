@@ -10,6 +10,7 @@ use ebook_manager::colophon::COLOPHON_REV;
 use ebook_manager::covers;
 use ebook_manager::dictionary::{Dictionary, Entry, Lookup};
 use ebook_manager::enrich::{self, META_REV};
+use ebook_manager::formats::{self, FormatStatus};
 use ebook_manager::instance::{self, unix_now, Acquire, HolderInfo, InstanceLock};
 use ebook_manager::library::{self, MigrationReport};
 use ebook_manager::query::{self, BookFacts, Facets, Query, Status};
@@ -385,7 +386,12 @@ async fn build_worker(handle: tauri::AppHandle, state: Arc<AppState>) {
         };
 
         let logs_dir = state.logs_dir();
-        let env = JobEnv { store: &state.store, client: &state.client, logs_dir: &logs_dir, cancel: &state.queue.cancel };
+        let settings = state.settings();
+        let formats = build::Formats {
+            kepub: settings.make_kepub,
+            azw3: if settings.make_azw3 { formats::find_calibre() } else { None },
+        };
+        let env = JobEnv { store: &state.store, client: &state.client, logs_dir: &logs_dir, cancel: &state.queue.cancel, formats };
         let result = build::run_job(&env, &job, &progress).await;
 
         let record = match &result {
@@ -655,6 +661,48 @@ fn reveal_epub(handle: tauri::AppHandle, state: State<'_>, repo: String) -> Resu
     handle.opener().reveal_item_in_dir(path).map_err(|e| format!("show in folder: {e}"))
 }
 
+/// The book's epub and the Kobo / Kindle copies made from it, and whether Calibre is installed.
+#[tauri::command]
+fn formats_status(state: State<'_>, repo: String) -> Result<Option<FormatStatus>, String> {
+    state.loaded()?;
+    let calibre = formats::find_calibre().is_some();
+    Ok(state.store.epub_file(&repo).and_then(|epub| formats::status(&epub, calibre)))
+}
+
+/// Make the KEPUB ("kepub") or AZW3 ("azw3") beside the book's epub.
+#[tauri::command]
+async fn make_format(state: State<'_>, repo: String, format: String) -> Result<FormatStatus, String> {
+    state.loaded()?;
+    let epub = state.store.epub_file(&repo).ok_or("epub not found")?;
+    let title = state.store.get(&repo).map(|b| b.title).unwrap_or_else(|| repo.clone());
+    let calibre = formats::find_calibre();
+    let made = match format.as_str() {
+        "kepub" => formats::make_kepub(&epub).await.map(|_| ()),
+        "azw3" => {
+            let c = calibre.as_ref().ok_or("Calibre is not installed")?;
+            formats::make_azw3(c, &epub, &AtomicBool::new(false)).await.map(|_| ())
+        }
+        other => return Err(format!("unknown format {other}")),
+    };
+    let name = format.to_uppercase();
+    match &made {
+        Ok(()) => state.log_op(format!("Made {name} of {title}")),
+        Err(e) => state.log_op(format!("{name} failed for {title} — {e}")),
+    }
+    made?;
+    formats::status(&epub, calibre.is_some()).ok_or_else(|| "epub not found".into())
+}
+
+#[tauri::command]
+fn add_to_calibre(state: State<'_>, repo: String) -> Result<(), String> {
+    state.loaded()?;
+    let epub = state.store.epub_file(&repo).ok_or("epub not found")?;
+    let calibre = formats::find_calibre().ok_or("Calibre is not installed")?;
+    formats::add_to_calibre(&calibre, &epub)?;
+    state.log_op(format!("Sent {} to Calibre", epub.file_name().unwrap_or_default().to_string_lossy()));
+    Ok(())
+}
+
 #[tauri::command]
 fn open_library_folder(handle: tauri::AppHandle, state: State<'_>) -> Result<(), String> {
     let dir = state.store.epubs_dir.parent().unwrap_or(&state.store.epubs_dir).to_path_buf();
@@ -754,6 +802,8 @@ struct ReaderOpenResponse {
     author: String,
     word_count: i64,
     published: Option<Published>,
+    /// The book's page on standardebooks.org.
+    url: String,
     cover_path: String,
     progress: Option<BookProgress>,
     bookmarks: Vec<Bookmark>,
@@ -772,6 +822,7 @@ fn reader_open(state: State<'_>, repo: String) -> Result<ReaderOpenResponse, Str
         author: book.author,
         word_count: book.word_count,
         published: book.published,
+        url: book.url,
         cover_path: state.cover_path(&repo),
         progress: reading.progress(&repo),
         bookmarks: reading.bookmarks(&repo),
@@ -953,6 +1004,9 @@ fn main() {
             open_epub,
             reveal_epub,
             open_library_folder,
+            formats_status,
+            make_format,
+            add_to_calibre,
             instance_status,
             reader_open,
             reader_save_progress,

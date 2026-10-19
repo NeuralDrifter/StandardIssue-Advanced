@@ -22,6 +22,9 @@ pub struct AppSettings {
     pub build_covers: bool,
     /// File epubs into genre folders (see spec §5.7). Off keeps Uncategorized/.
     pub organize_by_genre: bool,
+    /// Also make a Kobo KEPUB / Kindle AZW3 (needs Calibre) after each build.
+    pub make_kepub: bool,
+    pub make_azw3: bool,
     /// Optional; raises the GitHub API rate limit for catalog sync.
     pub github_token: String,
     #[serde(flatten)]
@@ -38,6 +41,8 @@ impl Default for AppSettings {
             build_metadata: true,
             build_covers: true,
             organize_by_genre: false,
+            make_kepub: false,
+            make_azw3: false,
             github_token: String::new(),
             extra: Map::new(),
         }

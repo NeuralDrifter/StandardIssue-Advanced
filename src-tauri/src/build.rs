@@ -138,7 +138,7 @@ impl LineSplitter {
 async fn clone_repo(repo: &str, dir: &Path, log: &BuildLog, progress: &Progress, cancel: &AtomicBool) -> Result<(), String> {
     let url = format!("https://github.com/{ORG}/{repo}.git");
     log.line(format!("$ git clone --depth 1 --progress {url}"));
-    let mut child = tokio::process::Command::new("git")
+    let mut child = crate::proc::command("git")
         .args(["clone", "--depth", "1", "--progress", &url])
         .arg(dir)
         .stdout(std::process::Stdio::null())
@@ -193,7 +193,7 @@ async fn clone_repo(repo: &str, dir: &Path, log: &BuildLog, progress: &Progress,
 }
 
 async fn git_head(dir: &Path) -> String {
-    let out = tokio::process::Command::new("git").arg("-C").arg(dir).args(["rev-parse", "HEAD"]).output().await;
+    let out = crate::proc::command("git").arg("-C").arg(dir).args(["rev-parse", "HEAD"]).output().await;
     match out {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => String::new(),
@@ -305,6 +305,15 @@ pub struct JobEnv<'a> {
     pub client: &'a reqwest::Client,
     pub logs_dir: &'a Path,
     pub cancel: &'a AtomicBool,
+    pub formats: Formats,
+}
+
+/// Formats to make beside each built epub.
+#[derive(Debug, Clone, Default)]
+pub struct Formats {
+    pub kepub: bool,
+    /// Calibre to convert with, when AZW3 is wanted and installed.
+    pub azw3: Option<crate::formats::Calibre>,
 }
 
 /// Enrich (as needed), fetch the cover (if asked), then build. Streams the log
@@ -355,20 +364,47 @@ async fn run_job_inner(env: &JobEnv<'_>, job: &Job, progress: &Progress, log: &B
 
     let book = env.store.get(&job.repo).unwrap_or(book);
     let dest = env.store.target_path(&book);
-    if !job.force {
-        if let Some(existing) = env.store.locate(&book) {
+    let existing = if job.force { None } else { env.store.locate(&book) };
+    let (sha, epub) = match existing {
+        Some(existing) => {
             log.line(format!("Already built: {}", existing.display()));
-            return Ok(String::new());
+            (String::new(), existing)
+        }
+        None => {
+            let sha = build_epub(&job.repo, &dest, log, progress, env.cancel).await?;
+            // A forced rebuild into a new folder leaves no stale copy behind
+            if let Some(old) = env.store.epub_file(&job.repo).filter(|p| *p != dest) {
+                let _ = std::fs::remove_file(&old);
+                crate::formats::remove_companions(&old);
+            }
+            env.store.refresh_one(&repo_name(&book));
+            (sha, dest)
+        }
+    };
+    make_formats(env, &epub, progress, log).await;
+    Ok(sha)
+}
+
+/// Make the formats asked for that are missing or older than the epub. Failures are logged;
+/// the epub itself is already built.
+async fn make_formats(env: &JobEnv<'_>, epub: &Path, progress: &Progress, log: &BuildLog) {
+    use crate::formats;
+    if env.formats.kepub && formats::needs(epub, &crate::kepub::kepub_path(epub)) {
+        progress(100, "Making KEPUB");
+        match formats::make_kepub(epub).await {
+            Ok(r) => log.line(format!("Made KEPUB ({} sentences in {} documents)", r.spans, r.documents)),
+            Err(e) => log.line(format!("KEPUB failed: {e}")),
         }
     }
-    let sha = build_epub(&job.repo, &dest, log, progress, env.cancel).await?;
-
-    // A forced rebuild into a new folder leaves no stale copy behind
-    if let Some(old) = env.store.epub_file(&job.repo).filter(|p| *p != dest) {
-        let _ = std::fs::remove_file(old);
+    if let Some(calibre) = &env.formats.azw3 {
+        if formats::needs(epub, &formats::azw3_path(epub)) {
+            progress(100, "Making AZW3");
+            match formats::make_azw3(calibre, epub, env.cancel).await {
+                Ok(_) => log.line("Made AZW3 with Calibre"),
+                Err(e) => log.line(format!("AZW3 failed: {e}")),
+            }
+        }
     }
-    env.store.refresh_one(&repo_name(&book));
-    Ok(sha)
 }
 
 // --- Queue ---

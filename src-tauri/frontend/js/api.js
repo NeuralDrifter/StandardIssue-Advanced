@@ -30,6 +30,9 @@ export const api = {
 
   openEpub: repo => invoke('open_epub', { repo }),
   revealEpub: repo => invoke('reveal_epub', { repo }),
+  formatsStatus: repo => invoke('formats_status', { repo }),
+  makeFormat: (repo, format) => invoke('make_format', { repo, format }),
+  addToCalibre: repo => invoke('add_to_calibre', { repo }),
   openLibraryFolder: () => invoke('open_library_folder'),
   openUrl: url => invoke('plugin:opener|open_url', { url }),
   readingProgress: () => invoke('reading_progress_all'),

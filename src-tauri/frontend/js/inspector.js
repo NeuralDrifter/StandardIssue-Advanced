@@ -6,11 +6,18 @@ import { state, on, emit } from './state.js'
 import { build, openReader } from './actions.js'
 import { rowOf, statusOf } from './grid.js'
 import { toggleHtml, handleToggleClick } from './toolbar.js'
-import { $, esc, num, bytes, icon, coverUrl, plainParagraphs, dateTime } from './util.js'
+import { createFormats } from './formats.js'
+import { $, esc, num, icon, coverUrl, plainParagraphs, dateTime } from './util.js'
 
 let book = null     // row currently shown
 let renderedKey = '' // status key at last full render
 let logTimer = null
+
+const formats = createFormats({
+  container: () => $('#inspector [data-formats]'),
+  repo: () => (book?.downloaded ? book.repo_name : null),
+  onError: text => alertInline(text),
+})
 
 const STATUS_CHIP = {
   built: ['bg-tertiary/10 text-tertiary', 'Built edition'],
@@ -60,7 +67,7 @@ async function load() {
 }
 
 function onClick(e) {
-  if (handleToggleClick(e)) return
+  if (handleToggleClick(e) || formats.handleClick(e)) return
   const a = e.target.closest('[data-act]')
   if (!a || !book) return
   const repo = book.repo_name
@@ -71,7 +78,6 @@ function onClick(e) {
       break
     case 'read': openReader(repo); break
     case 'open': api.openEpub(repo).catch(err => alertInline(`Could not open: ${err}`)); break
-    case 'reveal': api.revealEpub(repo).catch(err => alertInline(`Could not show the file: ${err}`)); break
     case 'url': api.openUrl(a.dataset.url); break
     case 'build': build([repo]); break
     case 'rebuild': build([repo], { force: true }); break
@@ -195,11 +201,11 @@ function render() {
           <button data-act="read" class="py-2 px-space-sm rounded-lg bg-surface-container hover:bg-surface-container-high text-label-sm font-semibold flex items-center justify-center gap-1.5">${icon('menu_book', 'text-[16px] text-primary')}Read</button>
           <button data-act="open" class="py-2 px-space-sm rounded-lg bg-surface-container hover:bg-surface-container-high text-label-sm font-semibold flex items-center justify-center gap-1.5">${icon('open_in_new', 'text-[16px] text-secondary')}System reader</button>
         </div>
-        <div class="grid grid-cols-2 gap-2">
-          <button data-act="reveal" class="py-2 px-space-sm rounded-lg bg-surface-container hover:bg-surface-container-high text-label-sm font-semibold flex items-center justify-center gap-1.5">${icon('folder_open', 'text-[16px] text-tertiary')}Show in folder</button>
-          <button data-act="url" data-url="${esc(b.url)}" class="py-2 px-space-sm rounded-lg bg-surface-container hover:bg-surface-container-high text-label-sm font-semibold flex items-center justify-center gap-1.5">${icon('language', 'text-[16px] text-outline')}SE page</button>
+        <div class="flex flex-col gap-1.5 p-space-sm rounded-xl bg-surface-container-low">
+          <span class="eyebrow flex items-center gap-1.5">${icon('inventory_2', 'text-[14px] text-tertiary')}Archival formats</span>
+          <div data-formats class="flex flex-col gap-1.5"></div>
         </div>
-        <div class="text-[11px] text-outline text-center">EPUB 3 · ${bytes(b.epub_size)}</div>` : `
+        <button data-act="url" data-url="${esc(b.url)}" class="py-2 px-space-sm rounded-lg bg-surface-container hover:bg-surface-container-high text-label-sm font-semibold flex items-center justify-center gap-1.5">${icon('language', 'text-[16px] text-outline')}View on standardebooks.org</button>` : `
         <button data-act="url" data-url="${esc(b.url)}" class="py-2 px-space-sm rounded-lg bg-surface-container hover:bg-surface-container-high text-label-sm font-semibold flex items-center justify-center gap-1.5">${icon('language', 'text-[16px] text-outline')}Standard Ebooks page</button>`}
       <div class="flex items-center justify-center gap-space-md">${toggleHtml('build_metadata', 'Metadata')}${toggleHtml('build_covers', 'Cover art')}</div>
       <button data-act="${b.downloaded ? 'rebuild' : 'build'}" ${busy ? 'disabled' : ''}
@@ -210,6 +216,7 @@ function render() {
     </div>`
 
   if (last || busy) loadLog(b.repo_name, busy)
+  if (b.downloaded) formats.load()
 }
 
 function patchProgress() {

@@ -197,7 +197,9 @@ function settingsPage() {
     ${card(`<div class="eyebrow mb-space-sm">Builds</div>
       ${row('Parallel builds', 'How many books are cloned and packaged at once.', sel('build_concurrency', range(1, 6)))}
       ${row('Fetch metadata when building', 'Also read each book’s colophon (publication date, artwork credit). Genres are always fetched — they decide the folder.', sw('build_metadata'))}
-      ${row('Fetch cover art when building', 'Download the cover thumbnail for books that don’t have one yet.', sw('build_covers'))}`)}
+      ${row('Fetch cover art when building', 'Download the cover thumbnail for books that don’t have one yet.', sw('build_covers'))}
+      ${row('Also make a Kobo KEPUB', 'After each build, save a .kepub.epub beside the epub. Build All also fills in books that are already built.', sw('make_kepub'))}
+      ${row('Also make a Kindle AZW3', 'After each build, convert to .azw3 with Calibre (calibre-ebook.com), when it is installed. Takes a few seconds per book.', sw('make_azw3'))}`)}
     ${card(`<div class="eyebrow mb-space-sm">Catalog &amp; metadata</div>
       ${row('Parallel metadata requests', 'Used by Enrich Metadata.', sel('enrich_concurrency', [[5, 5], [10, 10], [15, 15], [20, 20]]))}
       ${row('GitHub token', 'Optional. Raises the GitHub API limit for catalog sync from 60 to 5,000 requests an hour. Needs no scopes.',

@@ -11,6 +11,7 @@ import { loadContents, contentsShell, renderContents, markContents, handleConten
 import { resetSearch, searchHtml, handleSearchSubmit, handleSearchClick, focusSearch } from './search.js'
 import { bookmarkHere, toggleBookmark, bookmarksHtml, handleBookmarksClick } from './bookmarks.js'
 import { startPace, trackPace, stopPace } from './pace.js'
+import { createFormats } from '../formats.js'
 import { define, resetLexicon, lexiconHtml, handleLexiconClick } from './lexicon.js'
 import { initAnnotations, attachAnnotations, onPageSelection, popoverJustOpened, popoverOpen, hidePopover, suppressPopover, annotationsHtml, handleAnnotationsClick, handleAnnotationsSubmit, resetAnnotations } from './annotations.js'
 
@@ -23,6 +24,16 @@ const WHEEL_LOCK_MS = 350
 let saveTimer = null
 let wheelLock = 0
 let fullscreen = false
+
+const formats = createFormats({
+  container: () => R.el && rq('[data-formats]'),
+  repo: () => R.repo,
+  onError: text => {
+    const box = rq('[data-fmt-error]')
+    box.textContent = text
+    box.hidden = false
+  },
+})
 
 // --- Shell ---
 
@@ -101,10 +112,9 @@ function build() {
         <section data-panel class="flex flex-col gap-space-sm p-space-md rounded-xl bg-surface-container-low shadow-lg"></section>
         <section class="flex flex-col gap-space-sm p-space-md rounded-xl bg-surface-container-low shadow-lg">
           <span class="eyebrow">Archival Formats</span>
-          <div class="flex flex-wrap gap-1.5">
-            <button data-act="system-reader" class="btn-glass" title="Open the EPUB 3 file in your default e-reader">${icon('open_in_new', 'text-[16px]')}EPUB 3</button>
-            <button data-act="reveal" class="btn-glass" title="Show the file in Explorer">${icon('folder_open', 'text-[16px]')}Show in folder</button>
-          </div>
+          <div data-formats class="flex flex-col gap-1.5"></div>
+          <div data-fmt-error class="text-body-sm text-error" hidden></div>
+          <button data-act="se-page" class="self-start text-label-sm text-secondary hover:underline flex items-center gap-1">${icon('language', 'text-[15px]')}View on standardebooks.org</button>
         </section>
       </aside>
     </div>`
@@ -133,6 +143,7 @@ function build() {
 }
 
 async function onClick(e) {
+  if (formats.handleClick(e)) return
   const act = e.target.closest('[data-act]')?.dataset.act
   switch (act) {
     case 'close': return close()
@@ -153,8 +164,7 @@ async function onClick(e) {
     case 'prev-section': return goSection(-1)
     case 'next-section': return goSection(1)
     case 'back': return goBack()
-    case 'system-reader': return api.openEpub(R.repo).catch(err => showMessage(`Could not open: ${err}`))
-    case 'reveal': return api.revealEpub(R.repo).catch(err => console.error(err))
+    case 'se-page': return R.info?.url && api.openUrl(R.info.url).catch(err => console.error(err))
   }
   if (handleContentsClick(e)) return
   if (R.panel === 'typeset' && handleTypesetClick(e)) return
@@ -215,6 +225,8 @@ async function open(repo) {
   R.bookmarks = info.bookmarks ?? []
   R.annotations = info.annotations ?? []
   R.pace = info.pace
+  rq('[data-fmt-error]').hidden = true
+  formats.load()
   rq('[data-title]').textContent = info.title || repo
   rq('[data-byline]').textContent = [info.author, info.published?.label].filter(Boolean).join(' • ')
 
