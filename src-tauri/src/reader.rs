@@ -1,5 +1,5 @@
 // Michael Burgus — https://github.com/NeuralDrifter
-// Reading state (positions, bookmarks, reading pace, reader settings), stored in reading.json
+// Reading state (positions, bookmarks, annotations, reading pace, reader settings), stored in reading.json
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -12,6 +12,7 @@ const THEMES: &[&str] = &["obsidian", "parchment", "cream", "oled"];
 const FONTS: &[&str] = &["publisher", "serif", "sans", "mono"];
 const LINE_HEIGHTS: &[&str] = &["compact", "normal", "relaxed"];
 const MEASURES: &[&str] = &["compact", "optimal", "wide"];
+pub const HIGHLIGHT_COLORS: &[&str] = &["gold", "sage", "rose", "sky"];
 
 const FONT_PX_MIN: f32 = 12.0;
 const FONT_PX_MAX: f32 = 32.0;
@@ -118,6 +119,28 @@ pub struct Bookmark {
     pub created_at: u64,
 }
 
+/// A highlighted passage, optionally with a note.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Annotation {
+    /// Range CFI of the highlighted text; identifies the annotation.
+    pub cfi: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub color: String,
+    #[serde(default)]
+    pub note: String,
+    /// Chapter name shown in the annotations list.
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub fraction: f64,
+    #[serde(default)]
+    pub created_at: u64,
+    #[serde(default)]
+    pub updated_at: u64,
+}
+
 /// Accumulated measured reading: words read during page turns and the time it took.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -170,6 +193,7 @@ pub struct ReadingState {
     pub settings: ReaderSettings,
     pub books: BTreeMap<String, BookProgress>,
     pub bookmarks: BTreeMap<String, Vec<Bookmark>>,
+    pub annotations: BTreeMap<String, Vec<Annotation>>,
     pub pace: Pace,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -182,6 +206,7 @@ impl Default for ReadingState {
             settings: ReaderSettings::default(),
             books: BTreeMap::new(),
             bookmarks: BTreeMap::new(),
+            annotations: BTreeMap::new(),
             pace: Pace::default(),
             extra: Map::new(),
         }
@@ -293,6 +318,54 @@ impl ReadingStore {
         Ok(out)
     }
 
+    pub fn annotations(&self, repo: &str) -> Vec<Annotation> {
+        self.state.lock().unwrap().annotations.get(repo).cloned().unwrap_or_default()
+    }
+
+    /// Add an annotation, or update the one at the same CFI (keeping when it was made);
+    /// returns the book's list in reading order.
+    pub fn save_annotation(&self, repo: &str, mut note: Annotation) -> Result<Vec<Annotation>, String> {
+        if note.cfi.is_empty() {
+            return Err("annotation has no location".into());
+        }
+        if !HIGHLIGHT_COLORS.contains(&note.color.as_str()) {
+            note.color = HIGHLIGHT_COLORS[0].into();
+        }
+        note.fraction = if note.fraction.is_finite() { note.fraction.clamp(0.0, 1.0) } else { 0.0 };
+        let now = crate::instance::unix_now();
+        note.updated_at = now;
+        let mut state = self.state.lock().unwrap();
+        let list = state.annotations.entry(repo.to_string()).or_default();
+        match list.iter_mut().find(|a| a.cfi == note.cfi) {
+            Some(old) => {
+                note.created_at = old.created_at;
+                *old = note;
+            }
+            None => {
+                note.created_at = now;
+                list.push(note);
+            }
+        }
+        list.sort_by(|a, b| a.fraction.total_cmp(&b.fraction));
+        let out = list.clone();
+        self.persist(&state)?;
+        Ok(out)
+    }
+
+    pub fn remove_annotation(&self, repo: &str, cfi: &str) -> Result<Vec<Annotation>, String> {
+        let mut state = self.state.lock().unwrap();
+        let Some(list) = state.annotations.get_mut(repo) else {
+            return Ok(Vec::new());
+        };
+        list.retain(|a| a.cfi != cfi);
+        let out = list.clone();
+        if out.is_empty() {
+            state.annotations.remove(repo);
+        }
+        self.persist(&state)?;
+        Ok(out)
+    }
+
     pub fn pace(&self) -> PaceInfo {
         self.state.lock().unwrap().pace.info()
     }
@@ -313,6 +386,36 @@ impl ReadingStore {
 }
 
 pub use crate::fsutil::write_atomic;
+
+/// Annotations as Markdown: one section per chapter, each highlight quoted with its note below.
+pub fn annotations_markdown(title: &str, author: &str, notes: &[Annotation]) -> String {
+    let mut out = format!("# {title}\n\n");
+    if !author.is_empty() {
+        out.push_str(&format!("{author}\n\n"));
+    }
+    out.push_str(&format!(
+        "{} {} from StandardIssue\n",
+        notes.len(),
+        if notes.len() == 1 { "annotation" } else { "annotations" }
+    ));
+    let mut chapter: Option<&str> = None;
+    for a in notes {
+        if chapter != Some(a.label.as_str()) {
+            chapter = Some(a.label.as_str());
+            let heading = if a.label.is_empty() { "Untitled section" } else { &a.label };
+            out.push_str(&format!("\n## {heading}\n"));
+        }
+        out.push('\n');
+        for line in a.text.trim().lines() {
+            out.push_str(&format!("> {}\n", line.trim()));
+        }
+        let note = a.note.trim();
+        if !note.is_empty() {
+            out.push_str(&format!("\n{note}\n"));
+        }
+    }
+    out
+}
 
 #[cfg(test)]
 mod tests {
@@ -374,7 +477,7 @@ mod tests {
         let path = t.path().join("reading.json");
         std::fs::write(
             &path,
-            r#"{"version":1,"annotations":{"x":1},
+            r#"{"version":1,"highlights_v2":{"x":1},
                 "settings":{"theme":"dark","ai_panel":true},
                 "books":{"a":{"cfi":"c","fraction":0.5,"updated_at":1,"notes":[1]}}}"#,
         )
@@ -384,7 +487,7 @@ mod tests {
         s.save_progress("a", "c2", 0.6).unwrap();
 
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(v["annotations"]["x"], 1);
+        assert_eq!(v["highlights_v2"]["x"], 1);
         assert_eq!(v["settings"]["ai_panel"], true);
         assert_eq!(v["settings"]["theme"], "obsidian");
         assert_eq!(v["books"]["a"]["notes"][0], 1);
@@ -464,6 +567,69 @@ mod tests {
         let raw = std::fs::read_to_string(t.path().join("reading.json")).unwrap();
         let v: Value = serde_json::from_str(&raw).unwrap();
         assert!(v["bookmarks"].get("a").is_none());
+    }
+
+    fn note(cfi: &str, fraction: f64, label: &str) -> Annotation {
+        Annotation {
+            cfi: cfi.into(),
+            text: format!("text at {fraction}"),
+            color: "sage".into(),
+            note: String::new(),
+            label: label.into(),
+            fraction,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn annotations_upsert_sort_remove_persist() {
+        let t = tempfile::tempdir().unwrap();
+        let s = store_in(t.path());
+        s.save_annotation("a", note("late", 0.9, "II")).unwrap();
+        let list = s.save_annotation("a", note("early", 0.2, "I")).unwrap();
+        assert_eq!(list.iter().map(|a| a.cfi.as_str()).collect::<Vec<_>>(), ["early", "late"]);
+        let made = list[1].created_at;
+        assert!(made > 0);
+
+        // Same CFI updates in place, keeps its creation time, bad colour falls back
+        let mut edit = note("late", 0.9, "II");
+        edit.note = "worth rereading".into();
+        edit.color = "purple".into();
+        let list = s.save_annotation("a", edit).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[1].note, "worth rereading");
+        assert_eq!(list[1].color, "gold");
+        assert_eq!(list[1].created_at, made);
+
+        assert!(s.save_annotation("a", note("", 0.5, "I")).is_err());
+
+        let s2 = store_in(t.path());
+        assert_eq!(s2.annotations("a").len(), 2);
+        assert_eq!(s2.remove_annotation("a", "early").unwrap().len(), 1);
+        assert!(s2.remove_annotation("a", "late").unwrap().is_empty());
+        assert!(s2.remove_annotation("missing", "x").unwrap().is_empty());
+        let v: Value =
+            serde_json::from_str(&std::fs::read_to_string(t.path().join("reading.json")).unwrap()).unwrap();
+        assert!(v["annotations"].get("a").is_none());
+    }
+
+    #[test]
+    fn annotations_export_as_markdown() {
+        let mut first = note("a", 0.1, "I: The Beginning");
+        first.text = "It was a\n  dark night.".into();
+        first.note = "  Opening line.  ".into();
+        let second = note("b", 0.2, "I: The Beginning");
+        let third = note("c", 0.5, "");
+        let md = annotations_markdown("The Lost World", "Arthur Conan Doyle", &[first, second, third]);
+        assert_eq!(
+            md,
+            "# The Lost World\n\nArthur Conan Doyle\n\n3 annotations from StandardIssue\n\
+             \n## I: The Beginning\n\n> It was a\n> dark night.\n\nOpening line.\n\
+             \n> text at 0.2\n\
+             \n## Untitled section\n\n> text at 0.5\n"
+        );
+        assert!(annotations_markdown("T", "", &[]).starts_with("# T\n\n0 annotations"));
     }
 
     #[test]

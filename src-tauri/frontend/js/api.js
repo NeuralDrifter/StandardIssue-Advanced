@@ -41,6 +41,9 @@ export const api = {
   readerSaveSettings: settings => invoke('reader_save_settings', { settings }),
   readerAddBookmark: (repo, bookmark) => invoke('reader_add_bookmark', { repo, bookmark }),
   readerRemoveBookmark: (repo, cfi) => invoke('reader_remove_bookmark', { repo, cfi }),
+  readerSaveAnnotation: (repo, annotation) => invoke('reader_save_annotation', { repo, annotation }),
+  readerRemoveAnnotation: (repo, cfi) => invoke('reader_remove_annotation', { repo, cfi }),
+  readerExportAnnotations: repo => invoke('reader_export_annotations', { repo }),
   readerRecordPace: (words, seconds) => invoke('reader_record_pace', { words, seconds }),
 }
 

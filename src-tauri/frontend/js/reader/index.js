@@ -11,6 +11,7 @@ import { loadContents, contentsShell, renderContents, markContents, handleConten
 import { resetSearch, searchHtml, handleSearchSubmit, handleSearchClick, focusSearch } from './search.js'
 import { bookmarkHere, toggleBookmark, bookmarksHtml, handleBookmarksClick } from './bookmarks.js'
 import { startPace, trackPace, stopPace } from './pace.js'
+import { initAnnotations, attachAnnotations, onPageSelection, popoverJustOpened, popoverOpen, hidePopover, annotationsHtml, handleAnnotationsClick, handleAnnotationsSubmit, resetAnnotations } from './annotations.js'
 
 const { convertFileSrc } = window.__TAURI__.core
 const win = window.__TAURI__.window.getCurrentWindow()
@@ -52,6 +53,9 @@ function build() {
           ${tool('bookmark', 'bookmark_add', '', 'Bookmark this page (B)')}
           <button data-act="bookmarks" title="Bookmarks" class="r-tool flex items-center gap-1 h-8 px-2 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface">
             ${icon('bookmarks', 'text-[18px]')}<span data-mark-count class="text-[10px] font-semibold min-w-4 px-1 rounded-md bg-secondary-container text-on-secondary-container"></span>
+          </button>
+          <button data-act="annotations" title="Highlights and notes (N)" class="r-tool flex items-center gap-1 h-8 px-2 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface">
+            ${icon('ink_highlighter', 'text-[18px]')}<span data-ann-count class="text-[10px] font-semibold min-w-4 px-1 rounded-md bg-secondary-container text-on-secondary-container"></span>
           </button>
           ${tool('fullscreen', 'fullscreen', '', 'Fullscreen (F)')}
         </div>
@@ -108,9 +112,21 @@ function build() {
   R.el.addEventListener('change', e => {
     if (e.target.matches('[data-range="font_size"]')) renderPanel()
   })
-  R.el.addEventListener('submit', e => handleSearchSubmit(e))
+  R.el.addEventListener('submit', async e => {
+    // Both handlers call preventDefault before their first await
+    if (handleSearchSubmit(e)) return
+    if (await handleAnnotationsSubmit(e)) renderPanel()
+  })
+  // The popover stops its own pointerdowns, so any that reach here are outside it
+  R.el.addEventListener('pointerdown', () => popoverOpen() && hidePopover())
   window.addEventListener('blur', flushSave)
   initTypeset(onSettingChanged)
+  initAnnotations({
+    onChange: () => {
+      renderMarks()
+      if (R.panel === 'annotations') renderPanel()
+    },
+  })
 }
 
 async function onClick(e) {
@@ -121,6 +137,7 @@ async function onClick(e) {
     case 'typeset': return togglePanel('typeset')
     case 'search': return togglePanel('search')
     case 'bookmarks': return togglePanel('bookmarks')
+    case 'annotations': return togglePanel('annotations')
     case 'bookmark':
       await toggleBookmark()
       renderMarks()
@@ -142,6 +159,10 @@ async function onClick(e) {
     return
   }
   if (R.panel === 'bookmarks' && (await handleBookmarksClick(e)) === 'rerender') {
+    renderPanel()
+    renderMarks()
+  }
+  if (R.panel === 'annotations' && (await handleAnnotationsClick(e)) === 'rerender') {
     renderPanel()
     renderMarks()
   }
@@ -187,6 +208,7 @@ async function open(repo) {
   if (R.repo !== repo) return // another book was opened meanwhile
   R.info = info
   R.bookmarks = info.bookmarks ?? []
+  R.annotations = info.annotations ?? []
   R.pace = info.pace
   rq('[data-title]').textContent = info.title || repo
   rq('[data-byline]').textContent = [info.author, info.published?.label].filter(Boolean).join(' • ')
@@ -209,6 +231,7 @@ async function open(repo) {
     R.view.addEventListener('load', onSectionLoad)
     R.view.addEventListener('external-link', onExternalLink)
     R.view.addEventListener('link', onInternalLink)
+    attachAnnotations(R.view)
     await R.view.open(book)
     R.fractions = R.view.getSectionFractions()
     applyBookSettings()
@@ -257,9 +280,10 @@ async function close({ keepShell = false } = {}) {
   await flushSave()
   await stopPace()
   resetSearch()
+  resetAnnotations()
   R.view?.close()
   R.view?.remove()
-  Object.assign(R, { view: null, book: null, info: null, repo: null, position: null, fractions: [], bookmarks: [], backCfi: null })
+  Object.assign(R, { view: null, book: null, info: null, repo: null, position: null, fractions: [], bookmarks: [], annotations: [], backCfi: null })
   rq('[data-left]').innerHTML = ''
   rq('[data-where]').innerHTML = ''
   rq('[data-page-note]').innerHTML = ''
@@ -276,6 +300,7 @@ async function close({ keepShell = false } = {}) {
 function onRelocate({ detail }) {
   if (!R.info) return
   R.position = detail
+  hidePopover()
   const f = detail.fraction ?? 0
   const i = currentSection()
   const chapter = cleanLabel(detail.tocItem?.label)
@@ -354,7 +379,7 @@ function renderLayout() {
   rq('[data-left]').hidden = !R.settings.toc_open
   rq('[data-right]').hidden = !R.panel
   for (const [act, on] of [['contents', R.settings.toc_open], ['typeset', R.panel === 'typeset'],
-    ['search', R.panel === 'search'], ['bookmarks', R.panel === 'bookmarks']]) {
+    ['search', R.panel === 'search'], ['bookmarks', R.panel === 'bookmarks'], ['annotations', R.panel === 'annotations']]) {
     const b = rq(`[data-act="${act}"]`)
     b.classList.toggle('text-primary', on)
     b.classList.toggle('bg-surface-container', on)
@@ -365,7 +390,7 @@ function renderLayout() {
 function renderPanel() {
   const el = rq('[data-panel]')
   if (!R.panel || !R.info) return
-  el.innerHTML = R.panel === 'typeset' ? typesetHtml() : R.panel === 'search' ? searchHtml() : bookmarksHtml()
+  el.innerHTML = { typeset: typesetHtml, search: searchHtml, bookmarks: bookmarksHtml, annotations: annotationsHtml }[R.panel]()
 }
 
 function toggleContents() {
@@ -397,6 +422,9 @@ function renderMarks() {
   const count = rq('[data-mark-count]')
   count.textContent = R.bookmarks.length || ''
   count.hidden = !R.bookmarks.length
+  const notes = rq('[data-ann-count]')
+  notes.textContent = R.annotations.length || ''
+  notes.hidden = !R.annotations.length
 }
 
 /** Chapter ticks along the scrubber, with a few labels underneath. */
@@ -460,10 +488,13 @@ async function goBack() {
 
 // --- Input inside book pages ---
 
-function onSectionLoad({ detail: { doc } }) {
+function onSectionLoad({ detail: { doc, index } }) {
   doc.addEventListener('keydown', onKey)
   doc.addEventListener('click', e => onPageClick(e, doc))
   doc.addEventListener('wheel', onWheel, { passive: true })
+  doc.addEventListener('pointerdown', () => hidePopover())
+  doc.addEventListener('pointerup', () => onPageSelection(doc, index))
+  doc.addEventListener('keyup', e => e.shiftKey && onPageSelection(doc, index))
 }
 
 function onPageClick(e, doc) {
@@ -472,8 +503,12 @@ function onPageClick(e, doc) {
   const frame = doc.defaultView.frameElement?.getBoundingClientRect()
   const area = rq('.r-view').getBoundingClientRect()
   const x = (frame?.left ?? 0) + e.clientX - area.left
-  if (x < area.width / 4) R.view.goLeft()
-  else if (x > area.width * 3 / 4) R.view.goRight()
+  // A click on a highlight opens its popover (foliate handles it after us), not a page turn
+  setTimeout(() => {
+    if (popoverJustOpened()) return
+    if (x < area.width / 4) R.view?.goLeft()
+    else if (x > area.width * 3 / 4) R.view?.goRight()
+  })
 }
 
 function onWheel(e) {
@@ -517,6 +552,7 @@ function onKey(e) {
     case 'End': goToSectionEdge(1); break
     case 't': case 'T': toggleContents(); break
     case 'b': case 'B': onClick({ target: rq('[data-act="bookmark"]') }); break
+    case 'n': case 'N': togglePanel('annotations'); break
     case 'f': case 'F': setFullscreen(!fullscreen); break
     case '+': case '=': changeFontSize(1); break
     case '-': case '_': changeFontSize(-1); break
@@ -533,7 +569,8 @@ function goToSectionEdge(anchor) {
 }
 
 function onEscape() {
-  if (fullscreen) setFullscreen(false)
+  if (popoverOpen()) hidePopover()
+  else if (fullscreen) setFullscreen(false)
   else if (R.panel) togglePanel(R.panel)
   else close()
 }
@@ -585,7 +622,7 @@ function showOpenFailed(repo, err) {
       api.openEpub(repo).catch(e => showMessage(`Could not open: ${e}`))))
 }
 
-// --- Context for future panels (notes, AI) ---
+// --- Context for future panels (AI) ---
 
 function getReaderContext() {
   if (!R.repo) return null

@@ -12,7 +12,7 @@ use ebook_manager::enrich::{self, META_REV};
 use ebook_manager::instance::{self, unix_now, Acquire, HolderInfo, InstanceLock};
 use ebook_manager::library::{self, MigrationReport};
 use ebook_manager::query::{self, BookFacts, Facets, Query, Status};
-use ebook_manager::reader::{BookProgress, Bookmark, PaceInfo, ReaderSettings, ReadingStore};
+use ebook_manager::reader::{self, Annotation, BookProgress, Bookmark, PaceInfo, ReaderSettings, ReadingStore};
 use ebook_manager::settings::{Activity, ActivityStore, AppSettings, OpRecord, SettingsStore};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -747,6 +747,7 @@ struct ReaderOpenResponse {
     cover_path: String,
     progress: Option<BookProgress>,
     bookmarks: Vec<Bookmark>,
+    annotations: Vec<Annotation>,
     pace: PaceInfo,
 }
 
@@ -764,6 +765,7 @@ fn reader_open(state: State<'_>, repo: String) -> Result<ReaderOpenResponse, Str
         cover_path: state.cover_path(&repo),
         progress: reading.progress(&repo),
         bookmarks: reading.bookmarks(&repo),
+        annotations: reading.annotations(&repo),
         pace: reading.pace(),
     })
 }
@@ -776,6 +778,34 @@ fn reader_add_bookmark(state: State<'_>, repo: String, bookmark: Bookmark) -> Re
 #[tauri::command]
 fn reader_remove_bookmark(state: State<'_>, repo: String, cfi: String) -> Result<Vec<Bookmark>, String> {
     state.loaded()?.reading.remove_bookmark(&repo, &cfi)
+}
+
+#[tauri::command]
+fn reader_save_annotation(state: State<'_>, repo: String, annotation: Annotation) -> Result<Vec<Annotation>, String> {
+    state.loaded()?.reading.save_annotation(&repo, annotation)
+}
+
+#[tauri::command]
+fn reader_remove_annotation(state: State<'_>, repo: String, cfi: String) -> Result<Vec<Annotation>, String> {
+    state.loaded()?.reading.remove_annotation(&repo, &cfi)
+}
+
+/// Write the book's annotations to "{Title} — annotations.md" beside its epub and show it in its folder.
+#[tauri::command]
+fn reader_export_annotations(handle: tauri::AppHandle, state: State<'_>, repo: String) -> Result<String, String> {
+    let notes = state.loaded()?.reading.annotations(&repo);
+    if notes.is_empty() {
+        return Err("this book has no annotations yet".into());
+    }
+    let epub = state.store.epub_file(&repo).ok_or("epub not found")?;
+    let book = state.store.get(&repo).unwrap_or_default();
+    let title = if book.title.is_empty() { repo.clone() } else { book.title.clone() };
+    let name = format!("{} — annotations.md", ebook_manager::books::sanitize_path(&title));
+    let out = epub.with_file_name(name);
+    reader::write_atomic(&out, reader::annotations_markdown(&title, &book.author, &notes).as_bytes())
+        .map_err(|e| format!("write {}: {e}", out.display()))?;
+    let _ = handle.opener().reveal_item_in_dir(&out);
+    Ok(out.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -906,6 +936,9 @@ fn main() {
             reader_save_settings,
             reader_add_bookmark,
             reader_remove_bookmark,
+            reader_save_annotation,
+            reader_remove_annotation,
+            reader_export_annotations,
             reader_record_pace,
             reading_progress_all,
         ])

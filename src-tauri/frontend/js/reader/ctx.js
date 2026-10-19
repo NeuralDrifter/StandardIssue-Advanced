@@ -11,9 +11,10 @@ export const R = {
   position: null,    // last foliate relocate detail
   fractions: [],     // section start fractions (length = sections + 1)
   bookmarks: [],
+  annotations: [],   // highlights and notes, in reading order
   pace: { wpm: 250, measured: false },
   get wpm() { return this.pace.wpm },
-  panel: null,       // right panel: 'typeset' | 'search' | 'bookmarks' | null
+  panel: null,       // right panel: 'typeset' | 'search' | 'bookmarks' | 'annotations' | null
   backCfi: null,     // where to return after following an internal link
 }
 
